@@ -7,6 +7,13 @@ if sys.platform == "darwin":
 import tkinter as tk
 import tkinter.messagebox as msgbox
 
+# ================= DATABASE USER DIPINDAHKAN KE SINI =================
+users_db = [
+    {"nama": "Administrator", "username": "admin", "password": "123", "role": "Admin"},
+    {"nama": "Budi Setiawan", "username": "budi", "password": "123", "role": "Kasir"},
+    {"nama": "Siti Aminah", "username": "siti", "password": "123", "role": "Apoteker"}
+]
+
 BG_MAIN = "#E6F4EA"
 BG_ACCENT = "#34A853"
 FG_TEXT = "#1E8E3E"
@@ -24,7 +31,6 @@ def show_login(on_login_success):
     login_win = tk.Tk()
     login_win.title("ApoLink - System Login")
     
-    # Langsung memaksa Fullscreen sejak awal window dibuka
     if sys.platform == "darwin":
         login_win.attributes('-fullscreen', True)
     else:
@@ -32,7 +38,6 @@ def show_login(on_login_success):
         
     login_win.configure(bg=BG_MAIN)
 
-    # Header / Branding Utama
     frame_header = tk.Frame(login_win, bg=BG_MAIN)
     frame_header.pack(pady=(80, 20))
 
@@ -42,14 +47,12 @@ def show_login(on_login_success):
     lbl_subtitle = tk.Label(frame_header, text="Please enter your credentials to access the system", bg=BG_MAIN, fg="#555555", font=('Calibri', 14))
     lbl_subtitle.pack(pady=5)
 
-    # Box Card Login Container
     card_login = tk.Frame(login_win, bg="white", bd=1, relief="solid", padx=40, pady=30)
     card_login.pack(pady=20)
 
     lbl_card_title = tk.Label(card_login, text="User Login", bg="white", fg=FG_TEXT, font=('Calibri', 18, 'bold'))
     lbl_card_title.grid(row=0, column=0, columnspan=2, pady=(0, 20))
 
-    # Form Field
     tk.Label(card_login, text="Username", bg="white", fg="#333333", font=('Calibri', 12, 'bold')).grid(row=1, column=0, sticky="w", pady=(5, 2))
     input_username = tk.Entry(card_login, font=('Calibri', 14), width=28, bg="#F9F9F9", fg="black", insertbackground="black", relief="solid", bd=1)
     input_username.grid(row=2, column=0, columnspan=2, pady=(0, 15), ipady=5)
@@ -62,10 +65,12 @@ def show_login(on_login_success):
         username = input_username.get()
         password = input_password.get()
 
-        if username == "admin" and password == "admin123":
-            msgbox.showinfo("Success", "Login Successful! Welcome to ApoLink.")
+        user_found = next((u for u in users_db if u["username"] == username and u["password"] == password), None)
+
+        if user_found:
+            msgbox.showinfo("Success", f"Login Successful! Welcome, {user_found['nama']}.")
             login_win.destroy()  
-            on_login_success()   
+            on_login_success(user_found, users_db)   
         else:
             msgbox.showerror("Error", "Invalid Username or Password!")
 

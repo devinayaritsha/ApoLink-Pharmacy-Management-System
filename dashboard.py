@@ -9,7 +9,6 @@ import tkinter.ttk as ttk
 import tkinter.messagebox as msgbox
 from datetime import datetime, timedelta
 
-# Helper CustomButton agar warna tombol responsive & tidak tertimpa macOS Aqua engine
 def CustomButton(parent, text, command, bg="#34A853", fg="white", font=("Calibri", 10, "bold"), padx=10, pady=5):
     btn_frame = tk.Frame(parent, bg=bg, cursor="hand2")
     lbl = tk.Label(btn_frame, text=text, bg=bg, fg=fg, font=font, padx=padx, pady=pady)
@@ -20,11 +19,7 @@ def CustomButton(parent, text, command, bg="#34A853", fg="white", font=("Calibri
     return btn_frame
 
 # ================= DATABASE IN-MEMORY =================
-users_db = [
-    {"nama": "Administrator", "username": "admin", "password": "123", "role": "Admin"},
-    {"nama": "Budi Kasir", "username": "budi", "password": "123", "role": "Kasir"},
-    {"nama": "Siti Apoteker", "username": "siti", "password": "123", "role": "Apoteker"}
-]
+users_db = [] # Diisi secara dinamis dari login.py
 
 products = [
     {"nama": "Paracetamol 500mg", "kategori": "Obat", "harga": 5000, "stok": 50, "tgl_exp": "2026-12-31"},
@@ -49,7 +44,10 @@ cart = []
 
 current_user = None
 
-def open_dashboard():
+def open_dashboard(user_logged_in, db_users):
+    global current_user, users_db
+    current_user = user_logged_in
+    users_db = db_users
     main_app()
 
 def main_app():
@@ -63,21 +61,12 @@ def main_app():
         
     root.configure(bg="#F4F6F9")
 
-    # Styling TTK khusus macOS agar Treeview (Tabel) & Combobox tidak terpengaruh Dark Mode
     style = ttk.Style()
     style.theme_use('clam')
-    style.configure("Treeview", 
-                    background="white", 
-                    foreground="black", 
-                    fieldbackground="white", 
-                    rowheight=25)
-    style.configure("Treeview.Heading", 
-                    background="#E0E0E0", 
-                    foreground="black", 
-                    font=("Calibri", 10, "bold"))
+    style.configure("Treeview", background="white", foreground="black", fieldbackground="white", rowheight=25)
+    style.configure("Treeview.Heading", background="#E0E0E0", foreground="black", font=("Calibri", 10, "bold"))
     style.configure("TCombobox", fieldbackground="white", background="#E0E0E0", foreground="black")
 
-    # Pemindai otomatis agar SEMUA tk.Label & tk.Entry berwarna tegas hitam
     def apply_responsive_styles(parent):
         for widget in parent.winfo_children():
             if isinstance(widget, tk.Label) and widget.cget("fg") in ["", "SystemButtonText", "gray"]:
@@ -87,52 +76,16 @@ def main_app():
             if widget.winfo_children():
                 apply_responsive_styles(widget)
 
-    # ================= 0. SYSTEM LOGIN SCREEN =================
-    def show_login():
-        for widget in root.winfo_children():
-            widget.destroy()
-
-        login_frame = tk.Frame(root, bg="white", padx=35, pady=35, bd=1, relief="solid")
-        login_frame.place(relx=0.5, rely=0.5, anchor="center")
-
-        tk.Label(login_frame, text="ApoLink System", font=("Calibri", 22, "bold"), bg="white", fg="#1E8E3E").pack(pady=(0, 20))
-
-        tk.Label(login_frame, text="Username:", bg="white", fg="#333333", font=("Calibri", 11, "bold")).pack(anchor="w")
-        ent_user = tk.Entry(login_frame, font=("Calibri", 11), width=25, bg="#F9F9F9", fg="black", relief="solid", bd=1)
-        ent_user.pack(pady=(0, 10), ipady=3)
-
-        tk.Label(login_frame, text="Password:", bg="white", fg="#333333", font=("Calibri", 11, "bold")).pack(anchor="w")
-        ent_pass = tk.Entry(login_frame, font=("Calibri", 11), width=25, show="*", bg="#F9F9F9", fg="black", relief="solid", bd=1)
-        ent_pass.pack(pady=(0, 20), ipady=3)
-
-        def process_login():
-            global current_user
-            u_in = ent_user.get()
-            p_in = ent_pass.get()
-
-            user_found = next((u for u in users_db if u["username"] == u_in and u["password"] == p_in), None)
-
-            if user_found:
-                current_user = user_found
-                show_dashboard_layout()
-            else:
-                msgbox.showerror("Login Gagal", "Username atau Password salah!")
-
-        btn_login = CustomButton(login_frame, text="LOGIN", command=process_login, bg="#1E8E3E", pady=6)
-        btn_login.pack(fill=tk.X)
-
     # ================= UTAMA LAYOUT SETELAH LOGIN =================
     def show_dashboard_layout():
         for widget in root.winfo_children():
             widget.destroy()
 
-        # Top Header Bar
         header = tk.Frame(root, bg="white", height=45, bd=1, relief="solid")
         header.pack(side=tk.TOP, fill=tk.X)
 
         tk.Label(header, text="ApoLink Pharmacy System", font=("Calibri", 12, "bold"), bg="white", fg="#1E8E3E").pack(side=tk.LEFT, padx=15, pady=8)
 
-        # User Greeting & Logout
         user_info_frame = tk.Frame(header, bg="white")
         user_info_frame.pack(side=tk.RIGHT, padx=15, pady=5)
 
@@ -140,15 +93,14 @@ def main_app():
         lbl_user.pack(side=tk.LEFT, padx=(0, 10))
 
         def logout():
-            global current_user
-            if msgbox.askyesno("Logout", "Apakah Anda yakin ingin keluar?"):
-                current_user = None
-                show_login()
+            # Konfirmasi dialog sebelum logout
+            jawaban = msgbox.askyesno("Konfirmasi Logout", "Apakah Anda yakin ingin keluar?")
+            if jawaban:
+                root.destroy()  # Tutup dashboard, alur otomatis kembali ke main.py (login)
 
         btn_logout = CustomButton(user_info_frame, text="🚪 Logout", command=logout, bg="#D84315", padx=8, pady=3)
         btn_logout.pack(side=tk.RIGHT)
 
-        # Main Body
         body = tk.Frame(root, bg="#F4F6F9")
         body.pack(fill=tk.BOTH, expand=True)
 
@@ -338,7 +290,6 @@ def main_app():
             btn_c.pack(side=tk.LEFT, padx=5)
 
         # 3. KELOLA PRODUK
-        # 3. KELOLA PRODUK (Diperbarui dengan Pop-up Riwayat UX Friendly)
         def show_produk():
             clear_content()
             tk.Label(content, text="Kelola Data Produk (Obat/Alkes/BHP)", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
@@ -364,7 +315,6 @@ def main_app():
                 for r in tree.get_children(): tree.delete(r)
                 for p in products: tree.insert("", tk.END, values=(p["nama"], p["kategori"], f"Rp {p['harga']:,}", p["stok"], p.get("tgl_exp", "-")))
 
-            # Pop-up Riwayat Stok yang Compact & UX Friendly
             def show_history_popup(event=None):
                 selected = tree.selection()
                 if not selected:
@@ -374,11 +324,9 @@ def main_app():
                 item_values = tree.item(selected[0])['values']
                 nama_produk = item_values[0]
 
-                # Toplevel Modal khusus
                 win_hist = tk.Toplevel(root)
                 win_hist.title(f"Riwayat Transaksi - {nama_produk}")
                 
-                # Mengatur Ukuran Pop-up & Posisikan Tepat di Tengah Layar
                 w_width, w_height = 550, 380
                 scr_w = win_hist.winfo_screenwidth()
                 scr_h = win_hist.winfo_screenheight()
@@ -388,8 +336,8 @@ def main_app():
                 
                 win_hist.resizable(False, False)
                 win_hist.configure(bg="white")
-                win_hist.transient(root) # Tetap melayang di atas jendela utama
-                win_hist.grab_set()    # Fokus ke modal saja
+                win_hist.transient(root)
+                win_hist.grab_set()
 
                 tk.Label(win_hist, text=f"Riwayat Transaksi: {nama_produk}", font=("Calibri", 13, "bold"), bg="white", fg="#1E8E3E").pack(pady=(15, 5))
 
@@ -414,7 +362,6 @@ def main_app():
                     for h in filtered_history:
                         tree_h.insert("", tk.END, values=(h["waktu"], h["pasien"], h["qty"], f"Rp {h['total']:,}"))
 
-                # Tombol Tutup UX Friendly
                 btn_close = CustomButton(win_hist, text="Tutup / Close", command=win_hist.destroy, bg="#D84315", padx=15, pady=4)
                 btn_close.pack(pady=(0, 15))
 
@@ -689,7 +636,7 @@ def main_app():
             
             refresh()
 
-        # NAVIGATION SIDEBAR (DINAMIS)
+        # NAVIGATION SIDEBAR
         def btn_nav(txt, cmd):
             return tk.Button(sidebar, text=txt, command=cmd, bg="#1E8E3E", fg="white", font=("Calibri", 11, "bold"), bd=0, activebackground="#34A853", activeforeground="white", pady=10, anchor="w", padx=20)
 
@@ -712,11 +659,6 @@ def main_app():
 
         show_dashboard()
 
-    show_login()
-    
-    # Memastikan warna teks terpoles hitam sepenuhnya sebelum aplikasi dirender
+    show_dashboard_layout()
     apply_responsive_styles(root)
     root.mainloop()
-
-if __name__ == "__main__":
-    main_app()
