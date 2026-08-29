@@ -32,7 +32,10 @@ def show_login(on_login_success):
     login_win.title("ApoLink - System Login")
     
     if sys.platform == "darwin":
-        login_win.attributes('-fullscreen', True)
+        login_win.update_idletasks()
+        screen_w = login_win.winfo_screenwidth()
+        screen_h = login_win.winfo_screenheight()
+        login_win.geometry(f"{screen_w}x{screen_h}+0+0")
     else:
         login_win.state('zoomed')
         
@@ -77,7 +80,7 @@ def show_login(on_login_success):
     button_login = CustomButton(card_login, text="LOGIN TO SYSTEM", command=authenticate, bg=BG_ACCENT)
     button_login.grid(row=5, column=0, columnspan=2, sticky="we")
 
-    lbl_footer = tk.Label(login_win, text="© ApoLink Management System v1.0", bg=BG_MAIN, fg="#666666", font=('Calibri', 10))
+    lbl_footer = tk.Label(login_win, text="© ApoLink - Integrated Pharmacy Management System v1.0", bg=BG_MAIN, fg="#666666", font=('Calibri', 10))
     lbl_footer.pack(side="bottom", pady=20)
 
     login_win.mainloop()

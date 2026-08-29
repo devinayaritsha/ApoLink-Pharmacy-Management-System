@@ -52,10 +52,13 @@ def open_dashboard(user_logged_in, db_users):
 
 def main_app():
     root = tk.Tk()
-    root.title("ApoLink - Integrated Pharmacy System")
+    root.title("ApoLink - Integrated Pharmacy Management System")
     
     if sys.platform == "darwin":
-        root.attributes('-fullscreen', True)
+        root.update_idletasks()
+        screen_w = root.winfo_screenwidth()
+        screen_h = root.winfo_screenheight()
+        root.geometry(f"{screen_w}x{screen_h}+0+0")
     else:
         root.state('zoomed') 
         
