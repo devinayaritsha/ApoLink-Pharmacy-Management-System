@@ -38,7 +38,7 @@ cd ApoLink-Pharmacy-Management-System
 ```
 3. Run the application:
 ```bash
-python main.py
+main.py
 ```
 
 ## 🔑 Demo Credentials
