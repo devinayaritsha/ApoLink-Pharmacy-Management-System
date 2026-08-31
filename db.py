@@ -59,6 +59,15 @@ def delete_user(user_id):
         cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
         conn.commit()
 
+def update_user_password(user_id, new_password):
+    """Memperbarui kata sandi user berdasarkan user_id."""
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE users SET password = %s WHERE id = %s",
+            (new_password, user_id),
+        )
+        conn.commit()
+
 
 # ================= PRODUCTS =================
 
@@ -385,3 +394,31 @@ def process_pembelian(product_id, produk_nama, supplier_nama, qty, harga_beli, t
             ),
         )
         conn.commit()
+
+# function buat dashboard
+def get_dashboard_metrics(self):
+    cursor = self.conn.cursor()
+    
+    # Total varian produk & produk stok menipis (<= 5)
+    cursor.execute("SELECT COUNT(*), SUM(CASE WHEN stok <= 5 THEN 1 ELSE 0 END) FROM products")
+    row_prod = cursor.fetchone()
+    total_produk = row_prod[0] or 0
+    stok_menipis = row_prod[1] or 0
+
+    # Total Penjualan & Transaksi Hari Ini
+    today = datetime.now().strftime("%Y-%m-%d")
+    cursor.execute("""
+        SELECT COUNT(DISTINCT id), SUM(total_harga) 
+        FROM penjualan 
+        WHERE DATE(tanggal) = ?
+    """, (today,))
+    row_penjualan = cursor.fetchone()
+    total_tx_today = row_penjualan[0] or 0
+    omset_today = row_penjualan[1] or 0
+
+    return {
+        "total_produk": total_produk,
+        "stok_menipis": stok_menipis,
+        "tx_today": total_tx_today,
+        "omset_today": omset_today
+    }

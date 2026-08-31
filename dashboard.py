@@ -58,6 +58,25 @@ class DateSelector(tk.Frame):
 cart = []
 current_user = None
 
+def get_safe_dashboard_metrics():
+    """Helper pengganti get_dashboard_metrics untuk menangani kompatibilitas PostgreSQL"""
+    try:
+        products = db.get_all_products()
+        total_produk = len(products)
+        stok_menipis = sum(1 for p in products if p['stok'] <= 5)
+        
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        lap_today = db.get_laporan_penjualan(today_str, today_str)
+        
+        return {
+            "total_produk": total_produk,
+            "stok_menipis": stok_menipis,
+            "tx_today": len(lap_today.get("transaksi", [])),
+            "omset_today": lap_today.get("total_omzet", 0)
+        }
+    except Exception:
+        return {"total_produk": 0, "stok_menipis": 0, "tx_today": 0, "omset_today": 0}
+
 def open_dashboard(user_logged_in, db_users=None):
     global current_user
     current_user = user_logged_in
@@ -127,32 +146,119 @@ def main_app():
             for widget in content.winfo_children():
                 widget.destroy()
 
-        # 1. DASHBOARD
-        def show_dashboard():
+        # 1. BERANDA / DASHBOARD INTERAKTIF
+        def show_beranda():
             clear_content()
-            tk.Label(content, text="Dashboard Ringkasan", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 15))
+            
+            f_header = tk.Frame(content, bg="white")
+            f_header.pack(fill=tk.X, pady=(0, 15))
+            
+            tk.Label(
+                f_header, 
+                text="📊 Dashboard Utama", 
+                font=("Calibri", 20, "bold"), 
+                bg="white", 
+                fg="#1E8E3E"
+            ).pack(side=tk.LEFT)
+            
+            tk.Label(
+                f_header, 
+                text=f"Hari ini: {datetime.now().strftime('%d %B %Y')}", 
+                font=("Calibri", 11, "italic"), 
+                bg="white", 
+                fg="#666666"
+            ).pack(side=tk.RIGHT, pady=5)
 
-            cards_frame = tk.Frame(content, bg="white")
-            cards_frame.pack(fill=tk.X, pady=10)
+            metrics = get_safe_dashboard_metrics()
 
-            products = db.get_all_products()
-            pasien_list = db.get_all_pasien()
+            f_quick = tk.LabelFrame(content, text="⚡ Akses Cepat (Quick Actions)", font=("Calibri", 11, "bold"), bg="white", fg="#333333", padx=15, pady=12)
+            f_quick.pack(fill=tk.X, pady=(0, 20))
 
-            today = datetime.now().date()
-            stok_kritis = sum(1 for p in products if p['stok'] <= 5)
+            if current_user["role"] in ["Admin", "Kasir"]:
+                CustomButton(f_quick, text="🛒 Kasir / Penjualan", command=show_kasir, bg="#1E8E3E", font=("Calibri", 11, "bold")).pack(side=tk.LEFT, padx=(0, 10))
+            if current_user["role"] in ["Admin", "Apoteker"]:
+                CustomButton(f_quick, text="🛍️ Restock Pembelian", command=show_pembelian, bg="#00838F", font=("Calibri", 11, "bold")).pack(side=tk.LEFT, padx=10)
+                CustomButton(f_quick, text="📦 Kelola Stok Obat", command=show_produk, bg="#E65100", font=("Calibri", 11, "bold")).pack(side=tk.LEFT, padx=10)
+            CustomButton(f_quick, text="📈 Lihat Laporan", command=show_laporan_penjualan, bg="#5E35B1", font=("Calibri", 11, "bold")).pack(side=tk.LEFT, padx=10)
 
-            exp_count = sum(1 for p in products if p['tgl_exp'] and p['tgl_exp'] <= today)
+            f_cards = tk.Frame(content, bg="white")
+            f_cards.pack(fill=tk.X, pady=(0, 20))
+            f_cards.columnconfigure((0, 1, 2, 3), weight=1, uniform="card")
 
-            def make_card(parent, title, val, color):
-                box = tk.Frame(parent, bg=color, padx=15, pady=15, width=150)
-                box.pack(side=tk.LEFT, padx=5)
-                tk.Label(box, text=title, bg=color, fg="white", font=("Calibri", 10)).pack()
-                tk.Label(box, text=str(val), bg=color, fg="white", font=("Calibri", 20, "bold")).pack()
+            def create_card(parent, col, title, value, subtext, bg_color, command=None):
+                card = tk.Frame(parent, bg=bg_color, cursor="hand2" if command else "arrow", relief="groove", bd=1)
+                card.grid(row=0, column=col, padx=5, sticky="nsew")
+                
+                if command:
+                    card.bind("<Button-1>", lambda e: command())
 
-            make_card(cards_frame, "Total Produk", len(products), "#2E7D32")
-            make_card(cards_frame, "Stok Kritis (≤5)", stok_kritis, "#00838F")
-            make_card(cards_frame, "Expired / Lewat", exp_count, "#D84315")
-            make_card(cards_frame, "Total Pasien", len(pasien_list), "#6A1B9A")
+                lbl_title = tk.Label(card, text=title, font=("Calibri", 10, "bold"), bg=bg_color, fg="#555555")
+                lbl_title.pack(anchor="w", padx=12, pady=(10, 2))
+                
+                lbl_val = tk.Label(card, text=str(value), font=("Calibri", 18, "bold"), bg=bg_color, fg="#111111")
+                lbl_val.pack(anchor="w", padx=12)
+
+                lbl_sub = tk.Label(card, text=subtext, font=("Calibri", 9, "italic"), bg=bg_color, fg="#777777")
+                lbl_sub.pack(anchor="w", padx=12, pady=(2, 10))
+
+                if command:
+                    for w in (lbl_title, lbl_val, lbl_sub):
+                        w.bind("<Button-1>", lambda e: command())
+
+            create_card(
+                f_cards, 0, 
+                "💰 Omset Hari Ini", 
+                f"Rp {metrics['omset_today']:,}", 
+                f"{metrics['tx_today']} Transaksi Selesai", 
+                "#E8F5E9", 
+                command=show_laporan_penjualan
+            )
+            
+            create_card(
+                f_cards, 1, 
+                "⚠️ Stok Menipis (<=5)", 
+                f"{metrics['stok_menipis']} Produk", 
+                "Klik untuk cek & reorder", 
+                "#FFEBEE" if metrics['stok_menipis'] > 0 else "#F5F5F5", 
+                command=show_produk if current_user["role"] in ["Admin", "Apoteker"] else None
+            )
+            
+            create_card(
+                f_cards, 2, 
+                "📦 Total Katalog", 
+                f"{metrics['total_produk']} Varian", 
+                "Klik kelola katalog obat", 
+                "#E3F2FD", 
+                command=show_produk if current_user["role"] in ["Admin", "Apoteker"] else None
+            )
+            
+            create_card(
+                f_cards, 3, 
+                "🚚 Restock Supplier", 
+                "Input Beli", 
+                "Klik untuk restock barang", 
+                "#E0F7FA", 
+                command=show_pembelian if current_user["role"] in ["Admin", "Apoteker"] else None
+            )
+
+            f_info = tk.Frame(content, bg="#F9F9F9", relief="solid", bd=1)
+            f_info.pack(fill=tk.BOTH, expand=True, pady=5, padx=2)
+
+            tk.Label(
+                f_info, 
+                text="💡 Tips Navigasi Cepat:", 
+                font=("Calibri", 11, "bold"), 
+                bg="#F9F9F9", 
+                fg="#333333"
+            ).pack(anchor="w", padx=15, pady=(10, 5))
+
+            tips = [
+                "• Klik pada Kartu Stok Menipis di atas untuk langsung melihat daftar obat yang habis.",
+                "• Gunakan tombol Akses Cepat hijau 'Kasir / Penjualan' untuk memulai transaksi pelanggan.",
+                "• Fitur pencarian instan tersedia di menu Produk dan Pembelian tanpa perlu scroll manual."
+            ]
+            for tip in tips:
+                tk.Label(f_info, text=tip, font=("Calibri", 10), bg="#F9F9F9", fg="#555555").pack(anchor="w", padx=20, pady=2)
 
         # 2. KASIR
         def show_kasir():
@@ -166,9 +272,10 @@ def main_app():
             lbl_clock.pack(side=tk.RIGHT)
 
             def update_clock():
-                now_str = datetime.now().strftime("%A, %d %b %Y - %H:%M:%S")
-                lbl_clock.config(text=f"🕒 {now_str}")
-                lbl_clock.after(1000, update_clock)
+                if content.winfo_exists():
+                    now_str = datetime.now().strftime("%A, %d %b %Y - %H:%M:%S")
+                    lbl_clock.config(text=f"🕒 {now_str}")
+                    lbl_clock.after(1000, update_clock)
 
             update_clock()
             cart.clear()
@@ -515,7 +622,7 @@ def main_app():
             
             refresh_table()
 
-        # 4. KELOLA USER
+# 4. KELOLA USER
         def show_kelola_user():
             clear_content()
             tk.Label(content, text="Kelola Akun Pengguna / User System", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
@@ -572,8 +679,79 @@ def main_app():
                     db.delete_user(user_id)
                     refresh()
 
+            # --- POPUP RESET PASSWORD ---
+            def reset_password():
+                selected = tree.selection()
+                if not selected:
+                    msgbox.showwarning("Peringatan", "Silakan pilih user dari tabel terlebih dahulu!")
+                    return
+
+                user_id = int(selected[0])
+                
+                # 1. Messagebox konfirmasi awal
+                konfirmasi = msgbox.askyesno("Konfirmasi Reset Password", "Apakah anda ingin mengganti kata sandi?")
+                if not konfirmasi:
+                    return
+
+                # Ambil data user terpilih untuk menampilkan password lama
+                user_data = next((u for u in db.get_all_users() if u["id"] == user_id), None)
+                if not user_data:
+                    msgbox.showerror("Error", "Data user tidak ditemukan!")
+                    return
+
+                # 2. Window Baru / Popup Form Reset Password
+                win_reset = tk.Toplevel(root)
+                win_reset.title("Reset Password User")
+                win_reset.geometry("360x220")
+                win_reset.configure(bg="white")
+                win_reset.transient(root)
+                win_reset.grab_set()
+
+                tk.Label(win_reset, text=f"Reset Password: {user_data['nama']}", font=("Calibri", 12, "bold"), bg="white", fg="#1E8E3E").pack(pady=(15, 10))
+
+                f_reset = tk.Frame(win_reset, bg="white")
+                f_reset.pack(padx=20, fill=tk.X)
+
+                # Field Password Lama (Read-only / Read-only state)
+                tk.Label(f_reset, text="Password Lama:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w", pady=5)
+                ent_pass_lama = tk.Entry(f_reset, bg="#F0F0F0", fg="black", width=20)
+                ent_pass_lama.insert(0, user_data["password"])
+                ent_pass_lama.config(state="readonly")
+                ent_pass_lama.grid(row=0, column=1, pady=5)
+
+                # Field Password Baru
+                tk.Label(f_reset, text="Password Baru:", bg="white", fg="#333333").grid(row=1, column=0, sticky="w", pady=5)
+                ent_pass_baru = tk.Entry(f_reset, bg="white", fg="black", show="*", width=20)
+                ent_pass_baru.grid(row=1, column=1, pady=5)
+
+                def simpan_reset():
+                    pass_baru = ent_pass_baru.get().strip()
+                    if not pass_baru:
+                        msgbox.showwarning("Peringatan", "Password baru tidak boleh kosong!")
+                        return
+
+                    try:
+                        db.update_user_password(user_id, pass_baru)
+                        win_reset.destroy()
+                        # 3. Messagebox sukses setelah simpan
+                        msgbox.showinfo("Sukses", "Data berhasil disimpan, silahkan login menggunakan akun anda")
+                        refresh()
+                    except Exception as e:
+                        msgbox.showerror("Database Error", f"Gagal memperbarui password:\n{e}")
+
+                f_btn_popup = tk.Frame(win_reset, bg="white")
+                f_btn_popup.pack(pady=15)
+
+                CustomButton(f_btn_popup, text="Simpan", command=simpan_reset, bg="#34A853").pack(side=tk.LEFT, padx=5)
+                CustomButton(f_btn_popup, text="Batal", command=win_reset.destroy, bg="#D84315").pack(side=tk.LEFT, padx=5)
+
             CustomButton(f_form, text="Tambah User", command=simpan, bg="#34A853").grid(row=1, column=4, padx=5)
-            CustomButton(content, text="🗑 Hapus User Selected", command=hapus, bg="#D84315").pack(anchor="w")
+            
+            f_actions = tk.Frame(content, bg="white")
+            f_actions.pack(anchor="w", pady=5)
+
+            CustomButton(f_actions, text="🗑 Hapus User Selected", command=hapus, bg="#D84315").pack(side=tk.LEFT, padx=(0, 5))
+            CustomButton(f_actions, text="🔑 Reset Password", command=reset_password, bg="#00838F").pack(side=tk.LEFT)
             
             refresh()
 
@@ -804,13 +982,29 @@ def main_app():
             cb_produk = ttk.Combobox(f_form, values=all_product_names, width=20)
             cb_produk.grid(row=0, column=3, padx=5, pady=2)
 
-            # --- Disesuaikan presisi & kondisinya persis seperti Combobox Supplier ---
             def on_keyrelease_produk(event):
                 if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
                 typed = cb_produk.get().lower()
                 cb_produk['values'] = all_product_names if typed == '' else [item for item in all_product_names if typed in item.lower()]
 
             cb_produk.bind('<KeyRelease>', on_keyrelease_produk)
+
+            tk.Label(f_form, text="Tgl Pembelian:", bg="white", fg="#333333").grid(row=0, column=4, padx=(10, 0), sticky="w")
+            
+            f_tgl = tk.Frame(f_form, bg="white")
+            f_tgl.grid(row=0, column=5, padx=5, pady=2, sticky="w")
+
+            cb_day = ttk.Combobox(f_tgl, values=[""] + [f"{i:02d}" for i in range(1, 32)], width=3)
+            cb_day.pack(side=tk.LEFT, padx=1)
+            cb_day.set(f"{datetime.now().day:02d}")
+
+            cb_month = ttk.Combobox(f_tgl, values=[""] + [f"{i:02d}" for i in range(1, 13)], width=3)
+            cb_month.pack(side=tk.LEFT, padx=1)
+            cb_month.set(f"{datetime.now().month:02d}")
+
+            cb_year = ttk.Combobox(f_tgl, values=[""] + [str(i) for i in range(2020, 2035)], width=5)
+            cb_year.pack(side=tk.LEFT, padx=1)
+            cb_year.set(str(datetime.now().year))
 
             tk.Label(f_form, text="Qty Beli:", bg="white", fg="#333333").grid(row=1, column=0, sticky="w", pady=(8, 2))
             ent_qty = tk.Entry(f_form, width=10, bg="white", fg="black")
@@ -820,48 +1014,70 @@ def main_app():
             ent_harga = tk.Entry(f_form, width=15, bg="white", fg="black")
             ent_harga.grid(row=1, column=3, padx=5, pady=(8, 2))
 
-            tk.Label(f_form, text="Tgl Pembelian:", bg="white", fg="#333333").grid(row=0, column=4, padx=5)
-            ent_beli = DateSelector(f_form)
-            ent_beli.grid(row=0, column=5, padx=5)
-
             tk.Label(f_form, text="Catatan:", bg="white", fg="#333333").grid(row=2, column=2, sticky="w", padx=(10, 0), pady=2)
             ent_catatan = tk.Entry(f_form, width=25, bg="white", fg="black")
             ent_catatan.grid(row=2, column=3, padx=5, pady=2)
 
-            f_search = tk.Frame(content, bg="white")
-            f_search.pack(fill=tk.X, pady=(10, 0))
-            tk.Label(f_search, text="🔍 Cari Riwayat:", bg="white", fg="#333333").pack(side=tk.LEFT)
-            ent_search = tk.Entry(f_search, width=30, bg="white", fg="black")
-            ent_search.pack(side=tk.LEFT, padx=5)
-
-            tree = ttk.Treeview(content, columns=("Tanggal", "Supplier", "Produk", "Qty", "Harga Beli", "Total", "Catatan"), show="headings", height=8)
+            tree = ttk.Treeview(content, columns=("Tanggal", "Supplier", "Produk", "Qty", "Harga Beli", "Total", "Catatan"), show="headings", height=10)
             widths = {"Tanggal": 100, "Supplier": 140, "Produk": 160, "Qty": 60, "Harga Beli": 100, "Total": 110, "Catatan": 150}
             for c in ("Tanggal", "Supplier", "Produk", "Qty", "Harga Beli", "Total", "Catatan"):
                 tree.heading(c, text=c)
                 tree.column(c, width=widths[c], anchor="center")
             tree.pack(fill=tk.BOTH, expand=True, pady=10)
 
-            def refresh():
-                keyword = ent_search.get().lower().strip()
-                for r in tree.get_children(): tree.delete(r)
+            def refresh_table(f_supp="", f_prod="", f_qty="", f_hrg="", f_cat="", f_d="", f_m="", f_y=""):
+                for r in tree.get_children(): 
+                    tree.delete(r)
+                
+                count = 0
                 for pb in db.get_all_pembelian():
-                    tgl_str = pb["tanggal"].strftime("%Y-%m-%d") if pb["tanggal"] else "-"
-                    total = pb["qty"] * pb["harga_beli"]
-                    haystack = f"{pb['supplier_nama']} {pb['produk_nama']} {pb['qty']} {pb['harga_beli']} {tgl_str} {pb['catatan'] or ''}".lower()
-                    if keyword and keyword not in haystack:
-                        continue
-                    tree.insert("", tk.END, iid=str(pb["id"]), values=(
-                        tgl_str, pb["supplier_nama"], pb["produk_nama"], pb["qty"],
-                        f"Rp {pb['harga_beli']:,}", f"Rp {total:,}", pb["catatan"] or "-"
-                    ))
+                    tgl_dt = pb["tanggal"]
+                    tgl_str = tgl_dt.strftime("%Y-%m-%d") if tgl_dt else "-"
+                    
+                    p_day = tgl_dt.strftime("%d") if tgl_dt else ""
+                    p_month = tgl_dt.strftime("%m") if tgl_dt else ""
+                    p_year = tgl_dt.strftime("%Y") if tgl_dt else ""
 
-            ent_search.bind("<KeyRelease>", lambda e: refresh())
+                    total = pb["qty"] * pb["harga_beli"]
+                    catatan_str = pb["catatan"] or ""
+
+                    match_supp = not f_supp or f_supp in pb["supplier_nama"].lower()
+                    match_prod = not f_prod or f_prod in pb["produk_nama"].lower()
+                    match_qty  = not f_qty  or f_qty == str(pb["qty"])
+                    match_hrg  = not f_hrg  or f_hrg == str(pb["harga_beli"])
+                    match_cat  = not f_cat  or f_cat in catatan_str.lower()
+                    
+                    match_d = not f_d or f_d == p_day
+                    match_m = not f_m or f_m == p_month
+                    match_y = not f_y or f_y == p_year
+
+                    if match_supp and match_prod and match_qty and match_hrg and match_cat and match_d and match_m and match_y:
+                        tree.insert("", tk.END, iid=str(pb["id"]), values=(
+                            tgl_str, pb["supplier_nama"], pb["produk_nama"], pb["qty"],
+                            f"Rp {pb['harga_beli']:,}", f"Rp {total:,}", catatan_str or "-"
+                        ))
+                        count += 1
+
+                return count
+
+            def cari_pembelian():
+                f_supp = cb_supplier.get().strip().lower()
+                f_prod = cb_produk.get().strip().lower()
+                f_qty  = ent_qty.get().strip()
+                f_hrg  = ent_harga.get().strip()
+                f_cat  = ent_catatan.get().strip().lower()
+                f_d    = cb_day.get().strip()
+                f_m    = cb_month.get().strip()
+                f_y    = cb_year.get().strip()
+
+                has_filter = any([f_supp, f_prod, f_qty, f_hrg, f_cat, f_d, f_m, f_y])
+                count = refresh_table(f_supp, f_prod, f_qty, f_hrg, f_cat, f_d, f_m, f_y)
+                
+                if has_filter and count == 0:
+                    msgbox.showinfo("Informasi", "Data pembelian yang Anda cari tidak ditemukan")
 
             def prompt_supplier_baru(nama_awal):
-                """Popup isi data supplier baru (Nama/Alamat/Kontak), sama seperti form di Kelola Supplier.
-                Return True kalau berhasil disimpan, False kalau dibatalkan."""
                 result = {"success": False}
-
                 win = tk.Toplevel(root)
                 win.title("Tambah Supplier Baru")
                 win.geometry("400x260")
@@ -911,10 +1127,7 @@ def main_app():
                 return result
 
             def prompt_produk_baru(nama_awal, harga_awal=""):
-                """Popup isi data produk baru (Nama/Kategori/Harga/Tgl Exp), sama seperti form di Kelola Produk.
-                Return True kalau berhasil disimpan, False kalau dibatalkan."""
                 result = {"success": False}
-
                 win = tk.Toplevel(root)
                 win.title("Tambah Produk Baru")
                 win.geometry("400x320")
@@ -978,7 +1191,9 @@ def main_app():
                 produk_nama = cb_produk.get().strip()
                 qty_s = ent_qty.get().strip()
                 harga_s = ent_harga.get().strip() or "0"
-                tanggal = ent_beli.get_date_str()
+                
+                d, m, y = cb_day.get().strip(), cb_month.get().strip(), cb_year.get().strip()
+                tanggal = f"{y}-{m}-{d}" if (d and m and y) else datetime.now().strftime("%Y-%m-%d")
                 catatan = ent_catatan.get().strip()
 
                 if not supplier_nama or not produk_nama:
@@ -991,23 +1206,19 @@ def main_app():
                     msgbox.showwarning("Peringatan", "Harga Beli harus berupa angka!")
                     return
 
-                # Kalau supplier belum terdaftar, minta lengkapi datanya dulu lewat popup
                 supplier_exists = any(s.lower() == supplier_nama.lower() for s in all_supplier_names)
                 if not supplier_exists:
                     hasil = prompt_supplier_baru(supplier_nama)
-                    if not hasil["success"]:
-                        return  # dibatalkan
+                    if not hasil["success"]: return
                     supplier_nama = hasil["nama"]
                     suppliers_cache[:] = db.get_all_suppliers()
                     all_supplier_names[:] = [s["nama"] for s in suppliers_cache]
                     cb_supplier['values'] = all_supplier_names
 
-                # Kalau produk belum terdaftar, minta lengkapi datanya dulu lewat popup
                 prod = db.get_product_by_name(produk_nama)
                 if not prod:
                     hasil = prompt_produk_baru(produk_nama, harga_s)
-                    if not hasil["success"]:
-                        return  # dibatalkan
+                    if not hasil["success"]: return
                     produk_nama = hasil["nama"]
                     prod = db.get_product_by_name(produk_nama)
                     products_cache[:] = db.get_all_products()
@@ -1027,10 +1238,11 @@ def main_app():
                     msgbox.showerror("Database Error", f"Gagal menyimpan pembelian:\n{e}")
                     return
 
-                refresh()
+                refresh_table()
                 cb_supplier.set(""); cb_produk.set("")
                 ent_qty.delete(0, tk.END); ent_harga.delete(0, tk.END); ent_catatan.delete(0, tk.END)
-                ent_beli.set_date(datetime.now())
+                now = datetime.now()
+                cb_day.set(f"{now.day:02d}"); cb_month.set(f"{now.month:02d}"); cb_year.set(str(now.year))
                 msgbox.showinfo("Sukses", f"Pembelian {qty_s} {produk_nama} dari {supplier_nama} berhasil dicatat, stok otomatis bertambah!")
 
             def hapus_pembelian():
@@ -1038,12 +1250,17 @@ def main_app():
                 if selected:
                     if msgbox.askyesno("Konfirmasi", "Hapus riwayat pembelian ini?"):
                         db.delete_pembelian(int(selected[0]))
-                        refresh()
+                        refresh_table()
 
-            CustomButton(f_form, text="Catat Pembelian", command=simpan_pembelian, bg="#34A853").grid(row=1, column=4, rowspan=2, padx=10)
+            btn_action_frame = tk.Frame(f_form, bg="white")
+            btn_action_frame.grid(row=2, column=4, columnspan=2, padx=5, pady=5, sticky="w")
+
+            CustomButton(btn_action_frame, text="Catat Pembelian", command=simpan_pembelian, bg="#34A853").pack(side=tk.LEFT, padx=(0, 5))
+            CustomButton(btn_action_frame, text="Cari", command=cari_pembelian, bg="#00838F").pack(side=tk.LEFT)
+
             CustomButton(content, text="🗑 Hapus Riwayat Selected", command=hapus_pembelian, bg="#D84315").pack(anchor="w")
 
-            refresh()
+            refresh_table()
 
         # 9. STOK OPNAME
         def show_stok_opname():
@@ -1130,10 +1347,7 @@ def main_app():
                 selisih = fisik - stok_sistem
 
                 try:
-                    # 1. Catat riwayat opname beserta tanggal pilihan UI
                     db.add_stok_opname(p_name, stok_sistem, fisik, selisih, tgl_opname)
-                    
-                    # 2. Update stok & log mutasi riwayat_stok sesuai tanggal pilihan UI
                     db.process_stok_opname(prod["id"], p_name, fisik, f"Opname Tanggal {tgl_opname}", tgl_opname)
 
                     refresh()
@@ -1147,7 +1361,6 @@ def main_app():
                 except Exception as e:
                     msgbox.showerror("Database Error", f"Gagal memproses Stok Opname:\n{e}")
 
-                    
             def hapus_opname():
                 selected = tree.selection()
                 if selected:
@@ -1241,7 +1454,7 @@ def main_app():
 
         user_role = current_user["role"]
 
-        btn_nav("📊 Dashboard", show_dashboard).pack(fill=tk.X)
+        btn_nav("📊 Dashboard", show_beranda).pack(fill=tk.X)
 
         if user_role in ["Admin", "Kasir"]:
             btn_nav("🛒 Kasir", show_kasir).pack(fill=tk.X)
@@ -1260,7 +1473,7 @@ def main_app():
         if user_role == "Admin":
             btn_nav("👤 Kelola User", show_kelola_user).pack(fill=tk.X)
 
-        show_dashboard()
+        show_beranda()
 
     show_dashboard_layout()
     apply_responsive_styles(root)
