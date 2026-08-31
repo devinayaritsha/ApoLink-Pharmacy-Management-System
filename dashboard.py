@@ -9,6 +9,8 @@ import tkinter.ttk as ttk
 import tkinter.messagebox as msgbox
 from datetime import datetime, timedelta
 
+import db
+
 def CustomButton(parent, text, command, bg="#34A853", fg="white", font=("Calibri", 10, "bold"), padx=10, pady=5):
     btn_frame = tk.Frame(parent, bg=bg, cursor="hand2")
     lbl = tk.Label(btn_frame, text=text, bg=bg, fg=fg, font=font, padx=padx, pady=pady)
@@ -18,41 +20,21 @@ def CustomButton(parent, text, command, bg="#34A853", fg="white", font=("Calibri
     btn_frame.bind("<Button-1>", lambda e: command())
     return btn_frame
 
-# ================= DATABASE IN-MEMORY =================
-users_db = [] # Diisi secara dinamis dari login.py
-
-products = [
-    {"nama": "Paracetamol 500mg", "kategori": "Obat", "harga": 5000, "stok": 50, "tgl_exp": "2026-12-31"},
-    {"nama": "Alkohol 70%", "kategori": "Alkes", "harga": 12000, "stok": 4, "tgl_exp": "2026-09-15"},
-    {"nama": "Kasa Steril", "kategori": "BHP", "harga": 15000, "stok": 2, "tgl_exp": "2026-08-01"},
-    {"nama": "Amoxicillin 500mg", "kategori": "Obat", "harga": 8000, "stok": 20, "tgl_exp": "2027-05-20"},
-    {"nama": "Vitamin C 1000mg", "kategori": "Obat", "harga": 10000, "stok": 30, "tgl_exp": "2026-09-01"}
-]
-
-pasien_list = [
-    {"nama": "Budi Santoso", "kontak": "08123456789"},
-    {"nama": "Siti Aminah", "kontak": "08567890123"}
-]
-
-suppliers = [
-    {"nama": "PT Kimia Farma", "alamat": "Jl. Veteran No. 10", "kontak": "021-5551234"}
-]
-
-stok_opname_list = []
-transaksi_history = []
+# ================= DATA SEKARANG DISIMPAN DI POSTGRESQL (lihat db.py) =================
+# cart bersifat sementara per-sesi kasir (belanjaan yang belum di-checkout), jadi tetap
+# di memori saja, tidak perlu tabel database.
 cart = []
 
 current_user = None
 
-def open_dashboard(user_logged_in, db_users):
-    global current_user, users_db
+def open_dashboard(user_logged_in, db_users=None):
+    global current_user
     current_user = user_logged_in
-    users_db = db_users
     main_app()
 
 def main_app():
     root = tk.Tk()
-    root.title("ApoLink - Integrated Pharmacy Management System")
+    root.title("ApoLink - Integrated Pharmacy System")
     
     if sys.platform == "darwin":
         root.update_idletasks()
@@ -125,17 +107,16 @@ def main_app():
             cards_frame = tk.Frame(content, bg="white")
             cards_frame.pack(fill=tk.X, pady=10)
 
+            products = db.get_all_products()
+            pasien_list = db.get_all_pasien()
+
             today = datetime.now().date()
             stok_kritis = sum(1 for p in products if p['stok'] <= 5)
-            
+
             exp_count = 0
             for p in products:
-                try:
-                    exp_date = datetime.strptime(p['tgl_exp'], "%Y-%m-%d").date()
-                    if exp_date <= today:
-                        exp_count += 1
-                except ValueError:
-                    pass
+                if p['tgl_exp'] and p['tgl_exp'] <= today:
+                    exp_count += 1
 
             def make_card(parent, title, val, color):
                 box = tk.Frame(parent, bg=color, padx=15, pady=15, width=150)
@@ -153,6 +134,8 @@ def main_app():
             clear_content()
             cart.clear()
 
+            products_cache = db.get_all_products()
+
             tk.Label(content, text="Kasir & Pembayaran", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
 
             f_in = tk.Frame(content, bg="white")
@@ -164,7 +147,7 @@ def main_app():
             ent_pasien.insert(0, "Umum")
 
             tk.Label(f_in, text="Pilih Produk:", bg="white", fg="#333333").grid(row=1, column=0, sticky="w")
-            all_product_names = [p["nama"] for p in products]
+            all_product_names = [p["nama"] for p in products_cache]
             cb_prod = ttk.Combobox(f_in, values=all_product_names, width=20)
             cb_prod.grid(row=1, column=1, padx=5, pady=5)
 
@@ -204,7 +187,7 @@ def main_app():
             def tambah():
                 p_name = cb_prod.get()
                 qty_s = ent_qty.get()
-                item = next((p for p in products if p["nama"] == p_name), None)
+                item = next((p for p in products_cache if p["nama"] == p_name), None)
                 
                 if not item:
                     msgbox.showwarning("Peringatan", "Produk tidak ditemukan!")
@@ -216,7 +199,8 @@ def main_app():
                         return
                     
                     sub = item["harga"] * q
-                    cart.append({"nama": p_name, "harga": item["harga"], "qty": q, "subtotal": sub, "ref": item})
+                    cart.append({"id": item["id"], "nama": p_name, "harga": item["harga"], "qty": q, "subtotal": sub})
+                    item["stok"] -= q  # supaya pengecekan stok berikutnya di sesi ini tetap akurat
                     tree.insert("", tk.END, values=(p_name, f"Rp {item['harga']:,}", q, f"Rp {sub:,}"))
                     update_total()
                     cb_prod.set("")
@@ -237,17 +221,14 @@ def main_app():
                 
                 nama_pasien = ent_pasien.get() or "Umum"
                 total_bayar = sum(c["subtotal"] for c in cart)
-                waktu = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                for item in cart:
-                    item["ref"]["stok"] -= item["qty"]
-                    transaksi_history.append({
-                        "waktu": waktu,
-                        "pasien": nama_pasien,
-                        "produk": item["nama"],
-                        "qty": item["qty"],
-                        "total": item["subtotal"]
-                    })
+                try:
+                    waktu_dt = db.process_sale(cart, nama_pasien)
+                except Exception as e:
+                    msgbox.showerror("Database Error", f"Gagal menyimpan transaksi:\n{e}")
+                    return
+
+                waktu = waktu_dt.strftime("%Y-%m-%d %H:%M:%S")
 
                 win_struk = tk.Toplevel(root)
                 win_struk.title("Struk Transaksi - ApoLink")
@@ -316,7 +297,9 @@ def main_app():
 
             def refresh_table():
                 for r in tree.get_children(): tree.delete(r)
-                for p in products: tree.insert("", tk.END, values=(p["nama"], p["kategori"], f"Rp {p['harga']:,}", p["stok"], p.get("tgl_exp", "-")))
+                for p in db.get_all_products():
+                    tgl_str = p['tgl_exp'].strftime("%Y-%m-%d") if p['tgl_exp'] else "-"
+                    tree.insert("", tk.END, iid=str(p["id"]), values=(p["nama"], p["kategori"], f"Rp {p['harga']:,}", p["stok"], tgl_str))
 
             def show_history_popup(event=None):
                 selected = tree.selection()
@@ -357,13 +340,14 @@ def main_app():
 
                 tree_h.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
 
-                filtered_history = [t for t in transaksi_history if t["produk"] == nama_produk]
+                filtered_history = db.get_transaksi_by_produk(nama_produk)
 
                 if not filtered_history:
                     tree_h.insert("", tk.END, values=("-", "Belum ada transaksi", "-", "-"))
                 else:
                     for h in filtered_history:
-                        tree_h.insert("", tk.END, values=(h["waktu"], h["pasien"], h["qty"], f"Rp {h['total']:,}"))
+                        waktu_str = h["waktu"].strftime("%Y-%m-%d %H:%M:%S")
+                        tree_h.insert("", tk.END, values=(waktu_str, h["pasien"], h["qty"], f"Rp {h['total']:,}"))
 
                 btn_close = CustomButton(win_hist, text="Tutup / Close", command=win_hist.destroy, bg="#D84315", padx=15, pady=4)
                 btn_close.pack(pady=(0, 15))
@@ -372,21 +356,20 @@ def main_app():
 
             def simpan():
                 if e_nama.get() and e_hrg.get().isdigit() and e_stk.get().isdigit():
-                    products.append({
-                        "nama": e_nama.get(), 
-                        "kategori": cb_k.get(), 
-                        "harga": int(e_hrg.get()), 
-                        "stok": int(e_stk.get()),
-                        "tgl_exp": e_exp.get()
-                    })
+                    db.add_product(
+                        e_nama.get(),
+                        cb_k.get(),
+                        int(e_hrg.get()),
+                        int(e_stk.get()),
+                        e_exp.get()
+                    )
                     refresh_table()
                     e_nama.delete(0, tk.END); e_hrg.delete(0, tk.END); e_stk.delete(0, tk.END)
 
             def hapus():
                 selected = tree.selection()
                 if selected:
-                    idx = tree.index(selected[0])
-                    del products[idx]
+                    db.delete_product(int(selected[0]))
                     refresh_table()
 
             f_btn = tk.Frame(content, bg="white")
@@ -424,16 +407,16 @@ def main_app():
 
             def refresh():
                 for r in tree.get_children(): tree.delete(r)
-                for u in users_db: tree.insert("", tk.END, values=(u["nama"], u["username"], u["role"]))
+                for u in db.get_all_users():
+                    tree.insert("", tk.END, iid=str(u["id"]), values=(u["nama"], u["username"], u["role"]))
 
             def simpan():
                 if e_nama.get() and e_user.get() and e_pass.get():
-                    users_db.append({
-                        "nama": e_nama.get(),
-                        "username": e_user.get(),
-                        "password": e_pass.get(),
-                        "role": cb_role.get()
-                    })
+                    try:
+                        db.add_user(e_nama.get(), e_user.get(), e_pass.get(), cb_role.get())
+                    except Exception as e:
+                        msgbox.showerror("Database Error", f"Gagal menambah user (username mungkin sudah dipakai):\n{e}")
+                        return
                     refresh()
                     e_nama.delete(0, tk.END); e_user.delete(0, tk.END); e_pass.delete(0, tk.END)
                     msgbox.showinfo("Sukses", "User baru berhasil ditambahkan!")
@@ -441,11 +424,11 @@ def main_app():
             def hapus():
                 selected = tree.selection()
                 if selected:
-                    idx = tree.index(selected[0])
-                    if users_db[idx]["username"] == current_user["username"]:
+                    user_id = int(selected[0])
+                    if user_id == current_user["id"]:
                         msgbox.showwarning("Peringatan", "Anda tidak bisa menghapus akun Anda sendiri yang sedang aktif!")
                         return
-                    del users_db[idx]
+                    db.delete_user(user_id)
                     refresh()
 
             btn_t = CustomButton(f_form, text="Tambah User", command=simpan, bg="#34A853")
@@ -470,17 +453,19 @@ def main_app():
             today = datetime.now().date()
             warning_limit = today + timedelta(days=30)
 
-            for p in products:
-                tgl_str = p.get("tgl_exp", "")
-                status = "🟢 Aman"
-                try:
-                    exp_date = datetime.strptime(tgl_str, "%Y-%m-%d").date()
+            for p in db.get_all_products():
+                exp_date = p.get("tgl_exp")
+                if exp_date is None:
+                    status = "❓ Belum diisi"
+                    tgl_str = "-"
+                else:
+                    tgl_str = exp_date.strftime("%Y-%m-%d")
                     if exp_date <= today:
                         status = "🔴 KEDALUWARSA"
                     elif exp_date <= warning_limit:
                         status = "🟡 SEGERA EXP (≤30 Hari)"
-                except ValueError:
-                    status = "❓ Format Tgl Salah"
+                    else:
+                        status = "🟢 Aman"
 
                 tree_exp.insert("", tk.END, values=(p["nama"], p["kategori"], p["stok"], tgl_str, status))
 
@@ -503,19 +488,19 @@ def main_app():
 
             def refresh():
                 for r in tree.get_children(): tree.delete(r)
-                for p in pasien_list: tree.insert("", tk.END, values=(p["nama"], p["kontak"]))
+                for p in db.get_all_pasien():
+                    tree.insert("", tk.END, iid=str(p["id"]), values=(p["nama"], p["kontak"]))
 
             def simpan():
                 if e_nama.get():
-                    pasien_list.append({"nama": e_nama.get(), "kontak": e_kontak.get()})
+                    db.add_pasien(e_nama.get(), e_kontak.get())
                     refresh()
                     e_nama.delete(0, tk.END); e_kontak.delete(0, tk.END)
 
             def hapus():
                 selected = tree.selection()
                 if selected:
-                    idx = tree.index(selected[0])
-                    del pasien_list[idx]
+                    db.delete_pasien(int(selected[0]))
                     refresh()
 
             btn_t = CustomButton(f_form, text="Tambah Pasien", command=simpan, bg="#34A853")
@@ -546,19 +531,19 @@ def main_app():
 
             def refresh():
                 for r in tree.get_children(): tree.delete(r)
-                for s in suppliers: tree.insert("", tk.END, values=(s["nama"], s["alamat"], s["kontak"]))
+                for s in db.get_all_suppliers():
+                    tree.insert("", tk.END, iid=str(s["id"]), values=(s["nama"], s["alamat"], s["kontak"]))
 
             def simpan():
                 if e_nama.get():
-                    suppliers.append({"nama": e_nama.get(), "alamat": e_alamat.get(), "kontak": e_contact.get()})
+                    db.add_supplier(e_nama.get(), e_alamat.get(), e_contact.get())
                     refresh()
                     e_nama.delete(0, tk.END); e_alamat.delete(0, tk.END); e_contact.delete(0, tk.END)
 
             def hapus():
                 selected = tree.selection()
                 if selected:
-                    idx = tree.index(selected[0])
-                    del suppliers[idx]
+                    db.delete_supplier(int(selected[0]))
                     refresh()
 
             btn_s = CustomButton(f_form, text="Simpan Supplier", command=simpan, bg="#34A853")
@@ -578,7 +563,7 @@ def main_app():
             f_form.pack(fill=tk.X, pady=5)
 
             tk.Label(f_form, text="Pilih Item:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w")
-            cb_item = ttk.Combobox(f_form, values=[p["nama"] for p in products], width=20)
+            cb_item = ttk.Combobox(f_form, values=[p["nama"] for p in db.get_all_products()], width=20)
             cb_item.grid(row=0, column=1, padx=5, pady=5)
 
             tk.Label(f_form, text="Stok Sistem:", bg="white", fg="#333333").grid(row=0, column=2, padx=5)
@@ -590,7 +575,7 @@ def main_app():
             ent_fisik.grid(row=0, column=5, padx=5)
 
             def auto_load_stok(event=None):
-                p = next((x for x in products if x["nama"] == cb_item.get()), None)
+                p = db.get_product_by_name(cb_item.get())
                 if p:
                     lbl_sys_stok.config(text=str(p["stok"]))
 
@@ -604,20 +589,22 @@ def main_app():
 
             def refresh():
                 for r in tree.get_children(): tree.delete(r)
-                for o in stok_opname_list:
-                    tree.insert("", tk.END, values=(o["nama"], o["sistem"], o["fisik"], o["selisih"]))
+                for o in db.get_all_stok_opname():
+                    tree.insert("", tk.END, iid=str(o["id"]), values=(o["produk_nama"], o["stok_sistem"], o["stok_fisik"], o["selisih"]))
 
             def simpan_opname():
                 p_name = cb_item.get()
                 fisik_s = ent_fisik.get()
-                prod = next((x for x in products if x["nama"] == p_name), None)
+                prod = db.get_product_by_name(p_name)
 
                 if prod and fisik_s.isdigit():
                     fisik = int(fisik_s)
-                    selisih = fisik - prod["stok"]
-                    prod["stok"] = fisik
-                    
-                    stok_opname_list.append({"nama": p_name, "sistem": prod["stok"], "fisik": fisik, "selisih": selisih})
+                    stok_sistem = prod["stok"]
+                    selisih = fisik - stok_sistem
+
+                    db.update_product_stok(prod["id"], fisik)
+                    db.add_stok_opname(p_name, stok_sistem, fisik, selisih)
+
                     refresh()
                     cb_item.set("")
                     lbl_sys_stok.config(text="0")
@@ -627,8 +614,7 @@ def main_app():
             def hapus_opname():
                 selected = tree.selection()
                 if selected:
-                    idx = tree.index(selected[0])
-                    del stok_opname_list[idx]
+                    db.delete_stok_opname(int(selected[0]))
                     refresh()
 
             btn_p = CustomButton(f_form, text="Proses Opname", command=simpan_opname, bg="#34A853")

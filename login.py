@@ -7,12 +7,10 @@ if sys.platform == "darwin":
 import tkinter as tk
 import tkinter.messagebox as msgbox
 
-# ================= DATABASE USER DIPINDAHKAN KE SINI =================
-users_db = [
-    {"nama": "Administrator", "username": "admin", "password": "123", "role": "Admin"},
-    {"nama": "Budi Setiawan", "username": "budi", "password": "123", "role": "Kasir"},
-    {"nama": "Siti Aminah", "username": "siti", "password": "123", "role": "Apoteker"}
-]
+import db
+
+# users_db tidak lagi hardcode di sini - data user sekarang disimpan di tabel
+# `users` pada PostgreSQL (lihat db.py & schema.sql).
 
 BG_MAIN = "#E6F4EA"
 BG_ACCENT = "#34A853"
@@ -68,19 +66,23 @@ def show_login(on_login_success):
         username = input_username.get()
         password = input_password.get()
 
-        user_found = next((u for u in users_db if u["username"] == username and u["password"] == password), None)
+        try:
+            user_found = db.authenticate_user(username, password)
+        except Exception as e:
+            msgbox.showerror("Database Error", f"Gagal terhubung ke database:\n{e}")
+            return
 
         if user_found:
             msgbox.showinfo("Success", f"Login Successful! Welcome, {user_found['nama']}.")
-            login_win.destroy()  
-            on_login_success(user_found, users_db)   
+            login_win.destroy()
+            on_login_success(user_found, None)
         else:
             msgbox.showerror("Error", "Invalid Username or Password!")
 
     button_login = CustomButton(card_login, text="LOGIN TO SYSTEM", command=authenticate, bg=BG_ACCENT)
     button_login.grid(row=5, column=0, columnspan=2, sticky="we")
 
-    lbl_footer = tk.Label(login_win, text="© ApoLink - Integrated Pharmacy Management System v1.0", bg=BG_MAIN, fg="#666666", font=('Calibri', 10))
+    lbl_footer = tk.Label(login_win, text="© ApoLink Management System v1.0", bg=BG_MAIN, fg="#666666", font=('Calibri', 10))
     lbl_footer.pack(side="bottom", pady=20)
 
     login_win.mainloop()
