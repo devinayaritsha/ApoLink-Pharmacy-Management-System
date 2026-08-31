@@ -149,13 +149,20 @@ def get_all_stok_opname():
         return cur.fetchall()
 
 
-def add_stok_opname(produk_nama, stok_sistem, stok_fisik, selisih):
+def add_stok_opname(produk_nama, stok_sistem, stok_fisik, selisih, tanggal=None):
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute(
-            "INSERT INTO stok_opname (produk_nama, stok_sistem, stok_fisik, selisih) "
-            "VALUES (%s, %s, %s, %s)",
-            (produk_nama, stok_sistem, stok_fisik, selisih),
-        )
+        if tanggal:
+            cur.execute(
+                "INSERT INTO stok_opname (produk_nama, stok_sistem, stok_fisik, selisih, waktu) "
+                "VALUES (%s, %s, %s, %s, %s)",
+                (produk_nama, stok_sistem, stok_fisik, selisih, tanggal),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO stok_opname (produk_nama, stok_sistem, stok_fisik, selisih) "
+                "VALUES (%s, %s, %s, %s)",
+                (produk_nama, stok_sistem, stok_fisik, selisih),
+            )
         conn.commit()
 
 
@@ -199,3 +206,35 @@ def process_sale(cart_items, nama_pasien):
             )
         conn.commit()
     return waktu
+
+
+# ================= PEMBELIAN (RESTOCK DARI SUPPLIER) =================
+
+def get_all_pembelian():
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, supplier_nama, produk_nama, qty, harga_beli, tanggal, catatan "
+            "FROM pembelian ORDER BY tanggal DESC, id DESC"
+        )
+        return cur.fetchall()
+
+
+def process_pembelian(product_id, produk_nama, supplier_nama, qty, harga_beli, tanggal, catatan):
+    """
+    Catat satu pembelian/restock dari supplier & otomatis tambahkan stok produk terkait,
+    dalam satu database transaction (all-or-nothing).
+    """
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE products SET stok = stok + %s WHERE id=%s", (qty, product_id))
+        cur.execute(
+            "INSERT INTO pembelian (supplier_nama, produk_nama, qty, harga_beli, tanggal, catatan) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            (supplier_nama, produk_nama, qty, harga_beli, tanggal, catatan),
+        )
+        conn.commit()
+
+
+def delete_pembelian(pembelian_id):
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM pembelian WHERE id=%s", (pembelian_id,))
+        conn.commit()

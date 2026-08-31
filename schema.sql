@@ -52,6 +52,16 @@ CREATE TABLE IF NOT EXISTS transaksi (
     total INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pembelian (
+    id SERIAL PRIMARY KEY,
+    supplier_nama VARCHAR(150) NOT NULL,
+    produk_nama VARCHAR(150) NOT NULL,
+    qty INTEGER NOT NULL,
+    harga_beli INTEGER NOT NULL DEFAULT 0,
+    tanggal DATE NOT NULL DEFAULT CURRENT_DATE,
+    catatan VARCHAR(255)
+);
+
 -- ================================================================
 -- Seed data awal (sama seperti data dummy yang ada di kode lama)
 -- ================================================================
