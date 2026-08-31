@@ -144,26 +144,64 @@ def get_all_stok_opname():
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT id, produk_nama, stok_sistem, stok_fisik, selisih, waktu "
-            "FROM stok_opname ORDER BY id DESC"
+            "FROM stok_opname ORDER BY waktu DESC, id DESC"
         )
         return cur.fetchall()
 
 
-def add_stok_opname(produk_nama, stok_sistem, stok_fisik, selisih, tanggal=None):
+def add_stok_opname(produk_nama, stok_sistem, stok_fisik, selisih, tanggal_opname=None):
+    """Menyimpan record pencatatan stok opname beserta tanggal penyesuaiannya."""
+    waktu_input = tanggal_opname if tanggal_opname else datetime.now()
     with get_connection() as conn, conn.cursor() as cur:
-        if tanggal:
-            cur.execute(
-                "INSERT INTO stok_opname (produk_nama, stok_sistem, stok_fisik, selisih, waktu) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (produk_nama, stok_sistem, stok_fisik, selisih, tanggal),
-            )
-        else:
-            cur.execute(
-                "INSERT INTO stok_opname (produk_nama, stok_sistem, stok_fisik, selisih) "
-                "VALUES (%s, %s, %s, %s)",
-                (produk_nama, stok_sistem, stok_fisik, selisih),
-            )
+        cur.execute(
+            "INSERT INTO stok_opname (produk_nama, stok_sistem, stok_fisik, selisih, waktu) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (produk_nama, stok_sistem, stok_fisik, selisih, waktu_input),
+        )
         conn.commit()
+
+
+def process_stok_opname(product_id, produk_nama, stok_fisik, keterangan_opname="Penyesuaian Stok Opname", tanggal_opname=None):
+    """
+    Menyesuaikan stok produk berdasarkan hasil opname fisik 
+    dan mencatat selisihnya ke dalam tabel `riwayat_stok`.
+    """
+    waktu_sekarang = tanggal_opname if tanggal_opname else datetime.now()
+    with get_connection() as conn, conn.cursor() as cur:
+        # 1. Ambil stok awal dari sistem
+        cur.execute("SELECT stok FROM products WHERE id=%s FOR UPDATE", (product_id,))
+        prod = cur.fetchone()
+        stok_awal = prod["stok"] if prod else 0
+        
+        # 2. Hitung selisih masuk/keluar
+        selisih = stok_fisik - stok_awal
+        qty_masuk = selisih if selisih > 0 else 0
+        qty_keluar = abs(selisih) if selisih < 0 else 0
+
+        if selisih == 0:
+            return False
+
+        # 3. Update master produk dengan stok hasil opname
+        cur.execute("UPDATE products SET stok = %s WHERE id=%s", (stok_fisik, product_id))
+
+        # 4. Catat mutasi stok opname ke riwayat_stok
+        cur.execute(
+            "INSERT INTO riwayat_stok (produk_id, produk_nama, waktu, tipe_transaksi, keterangan, stok_awal, qty_masuk, qty_keluar, stok_akhir) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                product_id,
+                produk_nama,
+                waktu_sekarang,
+                "Stok Opname",
+                f"{keterangan_opname} (Selisih: {selisih:+d})",
+                stok_awal,
+                qty_masuk,
+                qty_keluar,
+                stok_fisik,
+            ),
+        )
+        conn.commit()
+    return True
 
 
 def delete_stok_opname(opname_id):
@@ -172,41 +210,65 @@ def delete_stok_opname(opname_id):
         conn.commit()
 
 
-# ================= TRANSAKSI =================
+# ================= RIWAYAT STOK =================
 
-def get_transaksi_by_produk(nama_produk):
+def get_riwayat_stok_by_produk(nama_produk):
+    """Mengambil log mutasi riwayat stok berdasarkan nama produk."""
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT waktu, pasien, produk, qty, total FROM transaksi "
-            "WHERE produk=%s ORDER BY waktu DESC",
+            "SELECT waktu, tipe_transaksi, keterangan, stok_awal, qty_masuk, qty_keluar, stok_akhir "
+            "FROM riwayat_stok WHERE LOWER(produk_nama) = LOWER(%s) ORDER BY waktu DESC, id DESC",
             (nama_produk,),
         )
         return cur.fetchall()
 
+# ================= TRANSAKSI (PENJUALAN KASIR) =================
 
 def process_sale(cart_items, nama_pasien):
     """
-    Proses satu transaksi kasir: kurangi stok tiap produk & catat riwayat transaksi
-    dalam satu database transaction (all-or-nothing).
-
-    cart_items: list of dict, tiap item minimal punya keys:
-        id (product id), nama, qty, subtotal
+    Proses transaksi kasir: kurangi stok produk & catat ke tabel `transaksi` 
+    serta log mutasi stok ke tabel `riwayat_stok` (All-in-one Transaction).
     """
     waktu = datetime.now()
     with get_connection() as conn, conn.cursor() as cur:
         for item in cart_items:
+            # 1. Ambil stok saat ini (stok_awal)
+            cur.execute("SELECT stok FROM products WHERE id=%s FOR UPDATE", (item["id"],))
+            prod = cur.fetchone()
+            stok_awal = prod["stok"] if prod else 0
+            stok_akhir = stok_awal - item["qty"]
+
+            # 2. Update stok di tabel master produk
             cur.execute(
-                "UPDATE products SET stok = stok - %s WHERE id=%s",
-                (item["qty"], item["id"]),
+                "UPDATE products SET stok = %s WHERE id=%s",
+                (stok_akhir, item["id"]),
             )
+
+            # 3. Catat transaksi penjualan
             cur.execute(
                 "INSERT INTO transaksi (waktu, pasien, produk, qty, total) "
                 "VALUES (%s, %s, %s, %s, %s)",
                 (waktu, nama_pasien, item["nama"], item["qty"], item["subtotal"]),
             )
+
+            # 4. Catat log mutasi ke riwayat_stok
+            cur.execute(
+                "INSERT INTO riwayat_stok (produk_id, produk_nama, waktu, tipe_transaksi, keterangan, stok_awal, qty_masuk, qty_keluar, stok_akhir) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    item["id"],
+                    item["nama"],
+                    waktu,
+                    "Penjualan (Keluar)",
+                    f"Penjualan Kasir - Pasien: {nama_pasien}",
+                    stok_awal,
+                    0,
+                    item["qty"],
+                    stok_akhir,
+                ),
+            )
         conn.commit()
     return waktu
-
 
 # ================= PEMBELIAN (RESTOCK DARI SUPPLIER) =================
 
@@ -219,22 +281,107 @@ def get_all_pembelian():
         return cur.fetchall()
 
 
-def process_pembelian(product_id, produk_nama, supplier_nama, qty, harga_beli, tanggal, catatan):
+def delete_pembelian(pembelian_id):
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM pembelian WHERE id=%s", (pembelian_id,))
+        conn.commit()
+
+
+# ================= RIWAYAT & LAPORAN TRANSAKSI =================
+
+def get_transaksi_by_produk(nama_produk):
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT waktu, pasien, produk, qty, total FROM transaksi "
+            "WHERE produk=%s ORDER BY waktu DESC",
+            (nama_produk,),
+        )
+        return cur.fetchall()
+
+
+def get_transaksi_by_pasien(nama_pasien):
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT waktu, produk, qty, total FROM transaksi "
+            "WHERE pasien=%s ORDER BY waktu DESC",
+            (nama_pasien,),
+        )
+        return cur.fetchall()
+
+
+def get_laporan_penjualan(tgl_mulai, tgl_selesai):
     """
-    Catat satu pembelian/restock dari supplier & otomatis tambahkan stok produk terkait,
-    dalam satu database transaction (all-or-nothing).
+    Mengembalikan ringkasan laporan penjualan dalam rentang tanggal tertentu:
+    total omzet, total item terjual, top 5 produk terlaris, dan daftar transaksi lengkap.
     """
     with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("UPDATE products SET stok = stok + %s WHERE id=%s", (qty, product_id))
+        cur.execute(
+            "SELECT waktu, pasien, produk, qty, total FROM transaksi "
+            "WHERE waktu::date BETWEEN %s AND %s ORDER BY waktu DESC",
+            (tgl_mulai, tgl_selesai),
+        )
+        rows = cur.fetchall()
+
+    total_omzet = sum(r["total"] for r in rows)
+    total_item = sum(r["qty"] for r in rows)
+
+    agregat = {}
+    for r in rows:
+        key = r["produk"]
+        if key not in agregat:
+            agregat[key] = {"produk": key, "total_qty": 0, "total_penjualan": 0}
+        agregat[key]["total_qty"] += r["qty"]
+        agregat[key]["total_penjualan"] += r["total"]
+
+    top_products = sorted(agregat.values(), key=lambda x: x["total_qty"], reverse=True)[:5]
+
+    return {
+        "total_omzet": total_omzet,
+        "total_item": total_item,
+        "top_products": top_products,
+        "transaksi": rows,
+    }
+
+
+# ================= PROSES PEMBELIAN (UPDATE STOK + LOG) =================
+
+def process_pembelian(product_id, produk_nama, supplier_nama, qty, harga_beli, tanggal, catatan):
+    """
+    Catat pembelian dari supplier, tambahkan stok produk, 
+    dan log mutasi ke tabel `riwayat_stok`.
+    """
+    waktu_sekarang = datetime.now()
+    with get_connection() as conn, conn.cursor() as cur:
+        # 1. Ambil stok saat ini
+        cur.execute("SELECT stok FROM products WHERE id=%s FOR UPDATE", (product_id,))
+        prod = cur.fetchone()
+        stok_awal = prod["stok"] if prod else 0
+        stok_akhir = stok_awal + qty
+
+        # 2. Update master produk
+        cur.execute("UPDATE products SET stok = %s WHERE id=%s", (stok_akhir, product_id))
+
+        # 3. Catat pembelian
         cur.execute(
             "INSERT INTO pembelian (supplier_nama, produk_nama, qty, harga_beli, tanggal, catatan) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
             (supplier_nama, produk_nama, qty, harga_beli, tanggal, catatan),
         )
-        conn.commit()
 
-
-def delete_pembelian(pembelian_id):
-    with get_connection() as conn, conn.cursor() as cur:
-        cur.execute("DELETE FROM pembelian WHERE id=%s", (pembelian_id,))
+        # 4. Catat log mutasi ke riwayat_stok
+        cur.execute(
+            "INSERT INTO riwayat_stok (produk_id, produk_nama, waktu, tipe_transaksi, keterangan, stok_awal, qty_masuk, qty_keluar, stok_akhir) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                product_id,
+                produk_nama,
+                waktu_sekarang,
+                "Restock (Masuk)",
+                f"Pembelian - Supplier: {supplier_nama}",
+                stok_awal,
+                qty,
+                0,
+                stok_akhir,
+            ),
+        )
         conn.commit()

@@ -20,11 +20,42 @@ def CustomButton(parent, text, command, bg="#34A853", fg="white", font=("Calibri
     btn_frame.bind("<Button-1>", lambda e: command())
     return btn_frame
 
-# ================= DATA SEKARANG DISIMPAN DI POSTGRESQL (lihat db.py) =================
-# cart bersifat sementara per-sesi kasir (belanjaan yang belum di-checkout), jadi tetap
-# di memori saja, tidak perlu tabel database.
-cart = []
+class DateSelector(tk.Frame):
+    """Komponen alternatif pengganti tkcalendar yang 100% stabil dan anti-freeze"""
+    def __init__(self, parent, default_date=None, bg="white"):
+        super().__init__(parent, bg=bg)
+        if default_date is None:
+            default_date = datetime.now()
+            
+        days = [f"{i:02d}" for i in range(1, 32)]
+        months = [f"{i:02d}" for i in range(1, 13)]
+        years = [str(i) for i in range(2020, 2035)]
+        
+        self.cb_day = ttk.Combobox(self, values=days, width=3, state="readonly")
+        self.cb_month = ttk.Combobox(self, values=months, width=3, state="readonly")
+        self.cb_year = ttk.Combobox(self, values=years, width=5, state="readonly")
+        
+        self.cb_day.pack(side=tk.LEFT, padx=1)
+        self.cb_month.pack(side=tk.LEFT, padx=1)
+        self.cb_year.pack(side=tk.LEFT, padx=1)
+        
+        self.set_date(default_date)
 
+    def set_date(self, dt):
+        self.cb_day.set(f"{dt.day:02d}")
+        self.cb_month.set(f"{dt.month:02d}")
+        self.cb_year.set(str(dt.year))
+
+    def get_date_str(self):
+        return f"{self.cb_year.get()}-{self.cb_month.get()}-{self.cb_day.get()}"
+
+    def get_date(self):
+        try:
+            return datetime.strptime(self.get_date_str(), "%Y-%m-%d").date()
+        except ValueError:
+            return datetime.now().date()
+
+cart = []
 current_user = None
 
 def open_dashboard(user_logged_in, db_users=None):
@@ -61,7 +92,6 @@ def main_app():
             if widget.winfo_children():
                 apply_responsive_styles(widget)
 
-    # ================= UTAMA LAYOUT SETELAH LOGIN =================
     def show_dashboard_layout():
         for widget in root.winfo_children():
             widget.destroy()
@@ -78,10 +108,8 @@ def main_app():
         lbl_user.pack(side=tk.LEFT, padx=(0, 10))
 
         def logout():
-            # Konfirmasi dialog sebelum logout
-            jawaban = msgbox.askyesno("Konfirmasi Logout", "Apakah Anda yakin ingin keluar?")
-            if jawaban:
-                root.destroy()  # Tutup dashboard, alur otomatis kembali ke main.py (login)
+            if msgbox.askyesno("Konfirmasi Logout", "Apakah Anda yakin ingin keluar?"):
+                root.destroy()
 
         btn_logout = CustomButton(user_info_frame, text="🚪 Logout", command=logout, bg="#D84315", padx=8, pady=3)
         btn_logout.pack(side=tk.RIGHT)
@@ -113,10 +141,7 @@ def main_app():
             today = datetime.now().date()
             stok_kritis = sum(1 for p in products if p['stok'] <= 5)
 
-            exp_count = 0
-            for p in products:
-                if p['tgl_exp'] and p['tgl_exp'] <= today:
-                    exp_count += 1
+            exp_count = sum(1 for p in products if p['tgl_exp'] and p['tgl_exp'] <= today)
 
             def make_card(parent, title, val, color):
                 box = tk.Frame(parent, bg=color, padx=15, pady=15, width=150)
@@ -132,13 +157,25 @@ def main_app():
         # 2. KASIR
         def show_kasir():
             clear_content()
+            f_top_kasir = tk.Frame(content, bg="white")
+            f_top_kasir.pack(fill=tk.X, pady=(0, 10))
+
+            tk.Label(f_top_kasir, text="🛒 Menu Transaksi Kasir", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(side=tk.LEFT)
+
+            lbl_clock = tk.Label(f_top_kasir, text="", font=("Calibri", 13, "bold"), bg="#1E8E3E", fg="white", padx=12, pady=4)
+            lbl_clock.pack(side=tk.RIGHT)
+
+            def update_clock():
+                now_str = datetime.now().strftime("%A, %d %b %Y - %H:%M:%S")
+                lbl_clock.config(text=f"🕒 {now_str}")
+                lbl_clock.after(1000, update_clock)
+
+            update_clock()
             cart.clear()
 
             products_cache = db.get_all_products()
             pasien_cache = db.get_all_pasien()
             all_pasien_names = [p["nama"] for p in pasien_cache]
-
-            tk.Label(content, text="Kasir & Pembayaran", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
 
             f_in = tk.Frame(content, bg="white")
             f_in.pack(fill=tk.X, pady=5)
@@ -149,14 +186,9 @@ def main_app():
             cb_prod.grid(row=0, column=1, padx=5, pady=5)
 
             def on_keyrelease(event):
-                if event.keysym in ("Up", "Down", "Return", "Escape"): return
+                if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
                 typed = cb_prod.get().lower()
-                if typed == '':
-                    cb_prod['values'] = all_product_names
-                else:
-                    filtered = [item for item in all_product_names if typed in item.lower()]
-                    cb_prod['values'] = filtered
-                    cb_prod.event_generate('<Down>')
+                cb_prod['values'] = all_product_names if typed == '' else [item for item in all_product_names if typed in item.lower()]
 
             cb_prod.bind('<KeyRelease>', on_keyrelease)
 
@@ -171,7 +203,6 @@ def main_app():
                 tree.column(c, width=120, anchor="center")
             tree.pack(fill=tk.BOTH, expand=True, pady=10)
 
-            # ---- Data pasien diisi terakhir, setelah daftar obat dipilih ----
             f_pasien = tk.Frame(content, bg="white")
             f_pasien.pack(fill=tk.X, pady=5)
 
@@ -183,15 +214,7 @@ def main_app():
             def on_keyrelease_pasien(event):
                 if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
                 typed = cb_pasien.get().lower()
-                if typed == '':
-                    cb_pasien['values'] = all_pasien_names
-                else:
-                    filtered = [item for item in all_pasien_names if typed in item.lower()]
-                    cb_pasien['values'] = filtered
-                    # Dropdown hanya dibuka kalau ada nama yang cocok, biar ngetik nama
-                    # pasien baru (yang belum terdaftar) gak keganggu popup kosong.
-                    if filtered:
-                        cb_pasien.event_generate('<Down>')
+                cb_pasien['values'] = all_pasien_names if typed == '' else [item for item in all_pasien_names if typed in item.lower()]
 
             cb_pasien.bind('<KeyRelease>', on_keyrelease_pasien)
 
@@ -200,7 +223,6 @@ def main_app():
             ent_wa.grid(row=0, column=3, padx=5, pady=5)
 
             def on_pasien_selected(event=None):
-                # Kalau nama yang diketik cocok dengan pasien terdaftar, auto-isi WA-nya
                 p = next((x for x in pasien_cache if x["nama"] == cb_pasien.get()), None)
                 ent_wa.delete(0, tk.END)
                 if p and p["kontak"]:
@@ -234,7 +256,7 @@ def main_app():
                     
                     sub = item["harga"] * q
                     cart.append({"id": item["id"], "nama": p_name, "harga": item["harga"], "qty": q, "subtotal": sub})
-                    item["stok"] -= q  # supaya pengecekan stok berikutnya di sesi ini tetap akurat
+                    item["stok"] -= q
                     tree.insert("", tk.END, values=(p_name, f"Rp {item['harga']:,}", q, f"Rp {sub:,}"))
                     update_total()
                     cb_prod.set("")
@@ -257,8 +279,6 @@ def main_app():
                 kontak_pasien = ent_wa.get().strip()
                 total_bayar = sum(c["subtotal"] for c in cart)
 
-                # Kalau nama pasien belum ada di data Kelola Pasien, otomatis daftarkan
-                # (dikecualikan untuk nama generik "Umum" tanpa WA)
                 sudah_terdaftar = any(p["nama"] == nama_pasien for p in pasien_cache)
                 if nama_pasien.lower() != "umum" and not sudah_terdaftar:
                     try:
@@ -314,11 +334,8 @@ def main_app():
             btn_action_frame = tk.Frame(f_bottom, bg="white")
             btn_action_frame.pack(side=tk.LEFT)
             
-            btn_h = CustomButton(btn_action_frame, text="🗑 Hapus Item", command=hapus_item, bg="#D84315")
-            btn_h.pack(side=tk.LEFT, padx=2)
-            
-            btn_c = CustomButton(btn_action_frame, text="🖨 Cetak Struk / Bayar", command=cetak_struk, bg="#1E8E3E")
-            btn_c.pack(side=tk.LEFT, padx=5)
+            CustomButton(btn_action_frame, text="🗑 Hapus Item", command=hapus_item, bg="#D84315").pack(side=tk.LEFT, padx=2)
+            CustomButton(btn_action_frame, text="🖨 Cetak Struk / Bayar", command=cetak_struk, bg="#1E8E3E").pack(side=tk.LEFT, padx=5)
 
         # 3. KELOLA PRODUK
         def show_produk():
@@ -328,19 +345,39 @@ def main_app():
             f_form = tk.Frame(content, bg="white")
             f_form.pack(fill=tk.X, pady=5)
 
-            tk.Label(f_form, text="Nama:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w"); e_nama = tk.Entry(f_form, bg="white", fg="black"); e_nama.grid(row=0, column=1, padx=5, pady=2)
-            tk.Label(f_form, text="Kategori:", bg="white", fg="#333333").grid(row=0, column=2, sticky="w"); cb_k = ttk.Combobox(f_form, values=["Obat", "Alkes", "BHP"], width=17); cb_k.grid(row=0, column=3, padx=5, pady=2)
-            tk.Label(f_form, text="Harga:", bg="white", fg="#333333").grid(row=1, column=0, sticky="w"); e_hrg = tk.Entry(f_form, bg="white", fg="black"); e_hrg.grid(row=1, column=1, padx=5, pady=2)
-            tk.Label(f_form, text="Stok:", bg="white", fg="#333333").grid(row=1, column=2, sticky="w"); e_stk = tk.Entry(f_form, bg="white", fg="black"); e_stk.grid(row=1, column=3, padx=5, pady=2)
-            
-            tk.Label(f_form, text="Tgl Exp (YYYY-MM-DD):", bg="white", fg="#333333").grid(row=2, column=0, sticky="w"); e_exp = tk.Entry(f_form, bg="white", fg="black"); e_exp.grid(row=2, column=1, padx=5, pady=2)
-            e_exp.insert(0, datetime.now().strftime("%Y-%m-%d"))
+            tk.Label(f_form, text="Nama:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w")
+            e_nama = tk.Entry(f_form, bg="white", fg="black")
+            e_nama.grid(row=0, column=1, padx=5, pady=2)
 
-            f_search = tk.Frame(content, bg="white")
-            f_search.pack(fill=tk.X, pady=(10, 0))
-            tk.Label(f_search, text="🔍 Cari:", bg="white", fg="#333333").pack(side=tk.LEFT)
-            ent_search = tk.Entry(f_search, width=30, bg="white", fg="black")
-            ent_search.pack(side=tk.LEFT, padx=5)
+            tk.Label(f_form, text="Kategori:", bg="white", fg="#333333").grid(row=0, column=2, sticky="w")
+            cb_k = ttk.Combobox(f_form, values=["", "Obat", "Alkes", "BHP"], width=17)
+            cb_k.grid(row=0, column=3, padx=5, pady=2)
+            cb_k.set("")
+
+            tk.Label(f_form, text="Harga:", bg="white", fg="#333333").grid(row=1, column=0, sticky="w")
+            e_hrg = tk.Entry(f_form, bg="white", fg="black")
+            e_hrg.grid(row=1, column=1, padx=5, pady=2)
+
+            tk.Label(f_form, text="Stok:", bg="white", fg="#333333").grid(row=1, column=2, sticky="w")
+            e_stk = tk.Entry(f_form, bg="white", fg="black")
+            e_stk.grid(row=1, column=3, padx=5, pady=2)
+            
+            tk.Label(f_form, text="Tgl Expired:", bg="white", fg="#333333").grid(row=0, column=6, padx=5)
+            
+            f_date = tk.Frame(f_form, bg="white")
+            f_date.grid(row=0, column=7, padx=5)
+
+            cb_day = ttk.Combobox(f_date, values=[""] + [f"{i:02d}" for i in range(1, 32)], width=3)
+            cb_day.pack(side=tk.LEFT, padx=1)
+            cb_day.set("")
+
+            cb_month = ttk.Combobox(f_date, values=[""] + [f"{i:02d}" for i in range(1, 13)], width=3)
+            cb_month.pack(side=tk.LEFT, padx=1)
+            cb_month.set("")
+
+            cb_year = ttk.Combobox(f_date, values=[""] + [str(i) for i in range(2024, 2035)], width=5)
+            cb_year.pack(side=tk.LEFT, padx=1)
+            cb_year.set("")
 
             tree = ttk.Treeview(content, columns=("Nama", "Kategori", "Harga", "Stok", "Tgl Exp"), show="headings", height=8)
             for c in ("Nama", "Kategori", "Harga", "Stok", "Tgl Exp"):
@@ -348,19 +385,77 @@ def main_app():
                 tree.column(c, anchor="center")
             tree.pack(fill=tk.BOTH, expand=True, pady=10)
 
-            def refresh_table():
-                keyword = ent_search.get().lower().strip()
-                for r in tree.get_children(): tree.delete(r)
+            def refresh_table(f_nama="", f_kat="", f_hrg="", f_stk="", f_d="", f_m="", f_y=""):
+                for r in tree.get_children(): 
+                    tree.delete(r)
+                
+                count = 0
                 for p in db.get_all_products():
-                    tgl_str = p['tgl_exp'].strftime("%Y-%m-%d") if p['tgl_exp'] else "-"
-                    haystack = f"{p['nama']} {p['kategori']} {p['harga']} {p['stok']} {tgl_str}".lower()
-                    if keyword and keyword not in haystack:
-                        continue
-                    tree.insert("", tk.END, iid=str(p["id"]), values=(p["nama"], p["kategori"], f"Rp {p['harga']:,}", p["stok"], tgl_str))
+                    tgl_dt = p['tgl_exp']
+                    tgl_str = tgl_dt.strftime("%Y-%m-%d") if tgl_dt else "-"
+                    
+                    p_day = tgl_dt.strftime("%d") if tgl_dt else ""
+                    p_month = tgl_dt.strftime("%m") if tgl_dt else ""
+                    p_year = tgl_dt.strftime("%Y") if tgl_dt else ""
 
-            ent_search.bind("<KeyRelease>", lambda e: refresh_table())
+                    match_nama = not f_nama or f_nama in p['nama'].lower()
+                    match_kat = not f_kat or f_kat == p['kategori'].lower()
+                    match_hrg = not f_hrg or f_hrg == str(p['harga'])
+                    match_stk = not f_stk or f_stk == str(p['stok'])
+                    
+                    match_d = not f_d or f_d == p_day
+                    match_m = not f_m or f_m == p_month
+                    match_y = not f_y or f_y == p_year
 
-            def show_history_popup(event=None):
+                    if match_nama and match_kat and match_hrg and match_stk and match_d and match_m and match_y:
+                        tree.insert("", tk.END, iid=str(p["id"]), values=(p["nama"], p["kategori"], f"Rp {p['harga']:,}", p["stok"], tgl_str))
+                        count += 1
+
+                return count
+
+            def cari_produk():
+                f_nama = e_nama.get().strip().lower()
+                f_kat = cb_k.get().strip().lower()
+                f_hrg = e_hrg.get().strip()
+                f_stk = e_stk.get().strip()
+                f_d = cb_day.get().strip()
+                f_m = cb_month.get().strip()
+                f_y = cb_year.get().strip()
+
+                has_filter = any([f_nama, f_kat, f_hrg, f_stk, f_d, f_m, f_y])
+                count = refresh_table(f_nama, f_kat, f_hrg, f_stk, f_d, f_m, f_y)
+                
+                if has_filter and count == 0:
+                    msgbox.showinfo("Informasi", "produk yang anda cari tidak ada")
+
+            def simpan():
+                nama = e_nama.get().strip()
+                kategori = cb_k.get().strip()
+                harga = e_hrg.get().strip()
+                stok = e_stk.get().strip()
+                
+                d, m, y = cb_day.get().strip(), cb_month.get().strip(), cb_year.get().strip()
+
+                if not nama or not kategori or not harga.isdigit() or not stok.isdigit() or not (d and m and y):
+                    msgbox.showwarning("Peringatan", "Mohon isi Nama, Kategori, Harga, Stok, dan Tanggal Expired (Lengkap DD-MM-YYYY) saat menyimpan!")
+                    return
+
+                existing_products = db.get_all_products()
+                is_exist = any(p['nama'].lower() == nama.lower() for p in existing_products)
+
+                if is_exist:
+                    msgbox.showwarning("Peringatan", "produk yang anda cari sudah ada")
+                else:
+                    tgl_exp_str = f"{y}-{m}-{d}"
+                    db.add_product(nama, kategori, int(harga), int(stok), tgl_exp_str)
+                    
+                    refresh_table()
+                    e_nama.delete(0, tk.END); e_hrg.delete(0, tk.END); e_stk.delete(0, tk.END)
+                    cb_k.set("")
+                    cb_day.set(""); cb_month.set(""); cb_year.set("")
+                    msgbox.showinfo("Sukses", "Produk baru berhasil ditambahkan!")
+
+            def show_riwayat_stok_popup():
                 selected = tree.selection()
                 if not selected:
                     msgbox.showinfo("Info", "Silakan pilih produk terlebih dahulu!")
@@ -370,60 +465,36 @@ def main_app():
                 nama_produk = item_values[0]
 
                 win_hist = tk.Toplevel(root)
-                win_hist.title(f"Riwayat Transaksi - {nama_produk}")
-                
-                w_width, w_height = 550, 380
-                scr_w = win_hist.winfo_screenwidth()
-                scr_h = win_hist.winfo_screenheight()
-                x_c = int((scr_w / 2) - (w_width / 2))
-                y_c = int((scr_h / 2) - (w_height / 2))
-                win_hist.geometry(f"{w_width}x{w_height}+{x_c}+{y_c}")
-                
-                win_hist.resizable(False, False)
+                win_hist.title(f"Riwayat Stok - {nama_produk}")
+                win_hist.geometry("780x420")
                 win_hist.configure(bg="white")
                 win_hist.transient(root)
                 win_hist.grab_set()
 
-                tk.Label(win_hist, text=f"Riwayat Transaksi: {nama_produk}", font=("Calibri", 13, "bold"), bg="white", fg="#1E8E3E").pack(pady=(15, 5))
+                tk.Label(win_hist, text=f"Riwayat Mutasi Stok: {nama_produk}", font=("Calibri", 13, "bold"), bg="white", fg="#1E8E3E").pack(pady=(15, 5))
+                tk.Label(win_hist, text="Mencakup penjualan, restock dari supplier, dan penyesuaian stok opname", font=("Calibri", 9), bg="white", fg="#888888").pack(pady=(0, 5))
 
-                tree_h = ttk.Treeview(win_hist, columns=("Waktu", "Pasien", "Qty", "Total Harga"), show="headings", height=8)
-                tree_h.heading("Waktu", text="Waktu")
-                tree_h.heading("Pasien", text="Pasien")
-                tree_h.heading("Qty", text="Qty")
-                tree_h.heading("Total Harga", text="Total Harga")
-
-                tree_h.column("Waktu", width=140, anchor="center")
-                tree_h.column("Pasien", width=130, anchor="w")
-                tree_h.column("Qty", width=60, anchor="center")
-                tree_h.column("Total Harga", width=120, anchor="e")
+                cols = ("Waktu", "Tipe", "Keterangan", "Stok Awal", "Masuk", "Keluar", "Stok Akhir")
+                tree_h = ttk.Treeview(win_hist, columns=cols, show="headings", height=10)
+                widths = {"Waktu": 130, "Tipe": 110, "Keterangan": 200, "Stok Awal": 70, "Masuk": 60, "Keluar": 60, "Stok Akhir": 70}
+                for c in cols:
+                    tree_h.heading(c, text=c)
+                    tree_h.column(c, width=widths[c], anchor="center" if c != "Keterangan" else "w")
 
                 tree_h.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
 
-                filtered_history = db.get_transaksi_by_produk(nama_produk)
-
-                if not filtered_history:
-                    tree_h.insert("", tk.END, values=("-", "Belum ada transaksi", "-", "-"))
+                riwayat = db.get_riwayat_stok_by_produk(nama_produk)
+                if not riwayat:
+                    tree_h.insert("", tk.END, values=("-", "-", "Belum ada mutasi stok", "-", "-", "-", "-"))
                 else:
-                    for h in filtered_history:
-                        waktu_str = h["waktu"].strftime("%Y-%m-%d %H:%M:%S")
-                        tree_h.insert("", tk.END, values=(waktu_str, h["pasien"], h["qty"], f"Rp {h['total']:,}"))
+                    for r in riwayat:
+                        waktu_str = r["waktu"].strftime("%Y-%m-%d %H:%M:%S")
+                        tree_h.insert("", tk.END, values=(
+                            waktu_str, r["tipe_transaksi"], r["keterangan"] or "-",
+                            r["stok_awal"], r["qty_masuk"], r["qty_keluar"], r["stok_akhir"]
+                        ))
 
-                btn_close = CustomButton(win_hist, text="Tutup / Close", command=win_hist.destroy, bg="#D84315", padx=15, pady=4)
-                btn_close.pack(pady=(0, 15))
-
-            tree.bind("<Double-1>", show_history_popup)
-
-            def simpan():
-                if e_nama.get() and e_hrg.get().isdigit() and e_stk.get().isdigit():
-                    db.add_product(
-                        e_nama.get(),
-                        cb_k.get(),
-                        int(e_hrg.get()),
-                        int(e_stk.get()),
-                        e_exp.get()
-                    )
-                    refresh_table()
-                    e_nama.delete(0, tk.END); e_hrg.delete(0, tk.END); e_stk.delete(0, tk.END)
+                CustomButton(win_hist, text="Tutup / Close", command=win_hist.destroy, bg="#D84315", padx=15, pady=4).pack(pady=(0, 15))
 
             def hapus():
                 selected = tree.selection()
@@ -431,17 +502,16 @@ def main_app():
                     db.delete_product(int(selected[0]))
                     refresh_table()
 
+            btn_action_frame = tk.Frame(f_form, bg="white")
+            btn_action_frame.grid(row=2, column=4, columnspan=2, padx=5, pady=5, sticky="w")
+
+            CustomButton(btn_action_frame, text="Simpan", command=simpan, bg="#34A853").pack(side=tk.LEFT, padx=(0, 5))
+            CustomButton(btn_action_frame, text="Cari", command=cari_produk, bg="#00838F").pack(side=tk.LEFT)
+
             f_btn = tk.Frame(content, bg="white")
             f_btn.pack(fill=tk.X)
-            
-            btn_s = CustomButton(f_form, text="Simpan", command=simpan, bg="#34A853")
-            btn_s.grid(row=2, column=4, padx=5)
-            
-            btn_h = CustomButton(f_btn, text="🗑 Hapus Produk Selected", command=hapus, bg="#D84315")
-            btn_h.pack(side=tk.LEFT)
-            
-            btn_r = CustomButton(f_btn, text="📜 Lihat Riwayat Stok", command=show_history_popup, bg="#00838F")
-            btn_r.pack(side=tk.LEFT, padx=5)
+            CustomButton(f_btn, text="🗑 Hapus Produk Selected", command=hapus, bg="#D84315").pack(side=tk.LEFT)
+            CustomButton(f_btn, text="📜 Lihat Riwayat Stok", command=show_riwayat_stok_popup, bg="#00838F").pack(side=tk.LEFT, padx=5)
             
             refresh_table()
 
@@ -486,7 +556,7 @@ def main_app():
                     try:
                         db.add_user(e_nama.get(), e_user.get(), e_pass.get(), cb_role.get())
                     except Exception as e:
-                        msgbox.showerror("Database Error", f"Gagal menambah user (username mungkin sudah dipakai):\n{e}")
+                        msgbox.showerror("Database Error", f"Gagal menambah user:\n{e}")
                         return
                     refresh()
                     e_nama.delete(0, tk.END); e_user.delete(0, tk.END); e_pass.delete(0, tk.END)
@@ -497,23 +567,19 @@ def main_app():
                 if selected:
                     user_id = int(selected[0])
                     if user_id == current_user["id"]:
-                        msgbox.showwarning("Peringatan", "Anda tidak bisa menghapus akun Anda sendiri yang sedang aktif!")
+                        msgbox.showwarning("Peringatan", "Anda tidak bisa menghapus akun Anda sendiri!")
                         return
                     db.delete_user(user_id)
                     refresh()
 
-            btn_t = CustomButton(f_form, text="Tambah User", command=simpan, bg="#34A853")
-            btn_t.grid(row=1, column=4, padx=5)
-            
-            btn_h = CustomButton(content, text="🗑 Hapus User Selected", command=hapus, bg="#D84315")
-            btn_h.pack(anchor="w")
+            CustomButton(f_form, text="Tambah User", command=simpan, bg="#34A853").grid(row=1, column=4, padx=5)
+            CustomButton(content, text="🗑 Hapus User Selected", command=hapus, bg="#D84315").pack(anchor="w")
             
             refresh()
 
         # 5. LAPORAN KEDALUWARSA
         def show_lap_expired():
             clear_content()
-
             f_header = tk.Frame(content, bg="white")
             f_header.pack(fill=tk.X, pady=(0, 10))
             tk.Label(f_header, text="⚠️ Laporan Obat / Goods Kedaluwarsa", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(side=tk.LEFT)
@@ -536,7 +602,6 @@ def main_app():
                 warning_limit = today + timedelta(days=30)
 
                 products = db.get_all_products()
-                # Urutkan dari tanggal kedaluwarsa terdekat; produk tanpa tanggal ditaruh paling akhir
                 products_sorted = sorted(products, key=lambda p: (p["tgl_exp"] is None, p["tgl_exp"]))
 
                 for p in products_sorted:
@@ -557,11 +622,8 @@ def main_app():
 
                 lbl_updated.config(text=f"🔄 Data real-time per: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-            btn_refresh = CustomButton(content, text="🔄 Refresh Data", command=refresh_laporan, bg="#00838F")
-            btn_refresh.pack(anchor="w", pady=(0, 5))
-
+            CustomButton(content, text="🔄 Refresh Data", command=refresh_laporan, bg="#00838F").pack(anchor="w", pady=(0, 5))
             tree_exp.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
-
             refresh_laporan()
 
         # 6. KELOLA PASIEN
@@ -597,6 +659,49 @@ def main_app():
 
             ent_search.bind("<KeyRelease>", lambda e: refresh())
 
+            def show_history_pasien_popup(event=None):
+                selected = tree.selection()
+                if not selected:
+                    msgbox.showinfo("Info", "Silakan pilih pasien terlebih dahulu!")
+                    return
+
+                item_values = tree.item(selected[0])['values']
+                nama_pasien = item_values[0]
+
+                win_hist = tk.Toplevel(root)
+                win_hist.title(f"Riwayat Obat / Pembelian - {nama_pasien}")
+                win_hist.geometry("600x400")
+                win_hist.configure(bg="white")
+                win_hist.transient(root)
+                win_hist.grab_set()
+
+                tk.Label(win_hist, text=f"Riwayat Rekam Obat: {nama_pasien}", font=("Calibri", 13, "bold"), bg="white", fg="#1E8E3E").pack(pady=(15, 5))
+
+                tree_h = ttk.Treeview(win_hist, columns=("Waktu", "Produk / Obat", "Qty", "Total Harga"), show="headings", height=9)
+                tree_h.heading("Waktu", text="Waktu Transaksi")
+                tree_h.heading("Produk / Obat", text="Produk / Obat")
+                tree_h.heading("Qty", text="Qty")
+                tree_h.heading("Total Harga", text="Total Harga")
+
+                tree_h.column("Waktu", width=150, anchor="center")
+                tree_h.column("Produk / Obat", width=180, anchor="w")
+                tree_h.column("Qty", width=60, anchor="center")
+                tree_h.column("Total Harga", width=120, anchor="e")
+
+                tree_h.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+
+                filtered_history = db.get_transaksi_by_pasien(nama_pasien)
+                if not filtered_history:
+                    tree_h.insert("", tk.END, values=("-", "Belum ada riwayat transaksi", "-", "-"))
+                else:
+                    for h in filtered_history:
+                        waktu_str = h["waktu"].strftime("%Y-%m-%d %H:%M:%S")
+                        tree_h.insert("", tk.END, values=(waktu_str, h["produk"], h["qty"], f"Rp {h['total']:,}"))
+
+                CustomButton(win_hist, text="Tutup / Close", command=win_hist.destroy, bg="#D84315", padx=15, pady=4).pack(pady=(0, 15))
+
+            tree.bind("<Double-1>", show_history_pasien_popup)
+
             def simpan():
                 if e_nama.get():
                     db.add_pasien(e_nama.get(), e_kontak.get())
@@ -609,11 +714,13 @@ def main_app():
                     db.delete_pasien(int(selected[0]))
                     refresh()
 
-            btn_t = CustomButton(f_form, text="Tambah Pasien", command=simpan, bg="#34A853")
-            btn_t.grid(row=0, column=4, padx=5)
+            CustomButton(f_form, text="Tambah Pasien", command=simpan, bg="#34A853").grid(row=0, column=4, padx=5)
             
-            btn_h = CustomButton(content, text="🗑 Hapus Pasien Selected", command=hapus, bg="#D84315")
-            btn_h.pack(anchor="w")
+            f_btn_action = tk.Frame(content, bg="white")
+            f_btn_action.pack(fill=tk.X)
+
+            CustomButton(f_btn_action, text="🗑 Hapus Pasien Selected", command=hapus, bg="#D84315").pack(side=tk.LEFT)
+            CustomButton(f_btn_action, text="📜 Lihat Riwayat Obat Pasien", command=show_history_pasien_popup, bg="#00838F").pack(side=tk.LEFT, padx=5)
             
             refresh()
 
@@ -664,15 +771,12 @@ def main_app():
                     db.delete_supplier(int(selected[0]))
                     refresh()
 
-            btn_s = CustomButton(f_form, text="Simpan Supplier", command=simpan, bg="#34A853")
-            btn_s.grid(row=1, column=4, padx=5)
-            
-            btn_h = CustomButton(content, text="🗑 Hapus Supplier Selected", command=hapus, bg="#D84315")
-            btn_h.pack(anchor="w")
+            CustomButton(f_form, text="Simpan Supplier", command=simpan, bg="#34A853").grid(row=1, column=4, padx=5)
+            CustomButton(content, text="🗑 Hapus Supplier Selected", command=hapus, bg="#D84315").pack(anchor="w")
             
             refresh()
 
-        # 7B. PEMBELIAN BARANG (RESTOCK DARI SUPPLIER)
+        # 8. PEMBELIAN BARANG (RESTOCK DARI SUPPLIER)
         def show_pembelian():
             clear_content()
             tk.Label(content, text="🛍️ Pembelian Barang (Restock dari Supplier)", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
@@ -692,13 +796,7 @@ def main_app():
             def on_keyrelease_supplier(event):
                 if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
                 typed = cb_supplier.get().lower()
-                if typed == '':
-                    cb_supplier['values'] = all_supplier_names
-                else:
-                    filtered = [item for item in all_supplier_names if typed in item.lower()]
-                    cb_supplier['values'] = filtered
-                    if filtered:
-                        cb_supplier.event_generate('<Down>')
+                cb_supplier['values'] = all_supplier_names if typed == '' else [item for item in all_supplier_names if typed in item.lower()]
 
             cb_supplier.bind('<KeyRelease>', on_keyrelease_supplier)
 
@@ -706,16 +804,11 @@ def main_app():
             cb_produk = ttk.Combobox(f_form, values=all_product_names, width=20)
             cb_produk.grid(row=0, column=3, padx=5, pady=2)
 
+            # --- Disesuaikan presisi & kondisinya persis seperti Combobox Supplier ---
             def on_keyrelease_produk(event):
                 if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
                 typed = cb_produk.get().lower()
-                if typed == '':
-                    cb_produk['values'] = all_product_names
-                else:
-                    filtered = [item for item in all_product_names if typed in item.lower()]
-                    cb_produk['values'] = filtered
-                    if filtered:
-                        cb_produk.event_generate('<Down>')
+                cb_produk['values'] = all_product_names if typed == '' else [item for item in all_product_names if typed in item.lower()]
 
             cb_produk.bind('<KeyRelease>', on_keyrelease_produk)
 
@@ -727,10 +820,9 @@ def main_app():
             ent_harga = tk.Entry(f_form, width=15, bg="white", fg="black")
             ent_harga.grid(row=1, column=3, padx=5, pady=(8, 2))
 
-            tk.Label(f_form, text="Tanggal (YYYY-MM-DD):", bg="white", fg="#333333").grid(row=2, column=0, sticky="w", pady=2)
-            ent_tanggal = tk.Entry(f_form, width=15, bg="white", fg="black")
-            ent_tanggal.grid(row=2, column=1, padx=5, pady=2, sticky="w")
-            ent_tanggal.insert(0, datetime.now().strftime("%Y-%m-%d"))
+            tk.Label(f_form, text="Tgl Pembelian:", bg="white", fg="#333333").grid(row=0, column=4, padx=5)
+            ent_beli = DateSelector(f_form)
+            ent_beli.grid(row=0, column=5, padx=5)
 
             tk.Label(f_form, text="Catatan:", bg="white", fg="#333333").grid(row=2, column=2, sticky="w", padx=(10, 0), pady=2)
             ent_catatan = tk.Entry(f_form, width=25, bg="white", fg="black")
@@ -765,12 +857,128 @@ def main_app():
 
             ent_search.bind("<KeyRelease>", lambda e: refresh())
 
+            def prompt_supplier_baru(nama_awal):
+                """Popup isi data supplier baru (Nama/Alamat/Kontak), sama seperti form di Kelola Supplier.
+                Return True kalau berhasil disimpan, False kalau dibatalkan."""
+                result = {"success": False}
+
+                win = tk.Toplevel(root)
+                win.title("Tambah Supplier Baru")
+                win.geometry("400x260")
+                win.configure(bg="white")
+                win.transient(root)
+                win.grab_set()
+
+                tk.Label(win, text="Supplier belum terdaftar", font=("Calibri", 13, "bold"), bg="white", fg="#1E8E3E").pack(pady=(15, 2))
+                tk.Label(win, text="Lengkapi data supplier baru berikut:", font=("Calibri", 9), bg="white", fg="#888888").pack(pady=(0, 10))
+
+                f = tk.Frame(win, bg="white")
+                f.pack(padx=20, fill=tk.X)
+
+                tk.Label(f, text="Nama Supplier:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w", pady=4)
+                e_nama = tk.Entry(f, bg="white", fg="black", width=25)
+                e_nama.grid(row=0, column=1, pady=4)
+                e_nama.insert(0, nama_awal)
+
+                tk.Label(f, text="Alamat:", bg="white", fg="#333333").grid(row=1, column=0, sticky="w", pady=4)
+                e_alamat = tk.Entry(f, bg="white", fg="black", width=25)
+                e_alamat.grid(row=1, column=1, pady=4)
+
+                tk.Label(f, text="Kontak:", bg="white", fg="#333333").grid(row=2, column=0, sticky="w", pady=4)
+                e_kontak = tk.Entry(f, bg="white", fg="black", width=25)
+                e_kontak.grid(row=2, column=1, pady=4)
+
+                def simpan_popup():
+                    nama = e_nama.get().strip()
+                    if not nama:
+                        msgbox.showwarning("Peringatan", "Nama supplier wajib diisi!")
+                        return
+                    try:
+                        db.add_supplier(nama, e_alamat.get().strip(), e_kontak.get().strip())
+                    except Exception as e:
+                        msgbox.showerror("Database Error", f"Gagal menyimpan supplier:\n{e}")
+                        return
+                    result["success"] = True
+                    result["nama"] = nama
+                    win.destroy()
+
+                f_btn = tk.Frame(win, bg="white")
+                f_btn.pack(pady=15)
+                CustomButton(f_btn, text="Simpan Supplier", command=simpan_popup, bg="#34A853").pack(side=tk.LEFT, padx=5)
+                CustomButton(f_btn, text="Batal", command=win.destroy, bg="#D84315").pack(side=tk.LEFT, padx=5)
+
+                win.wait_window()
+                return result
+
+            def prompt_produk_baru(nama_awal, harga_awal=""):
+                """Popup isi data produk baru (Nama/Kategori/Harga/Tgl Exp), sama seperti form di Kelola Produk.
+                Return True kalau berhasil disimpan, False kalau dibatalkan."""
+                result = {"success": False}
+
+                win = tk.Toplevel(root)
+                win.title("Tambah Produk Baru")
+                win.geometry("400x320")
+                win.configure(bg="white")
+                win.transient(root)
+                win.grab_set()
+
+                tk.Label(win, text="Produk belum terdaftar", font=("Calibri", 13, "bold"), bg="white", fg="#1E8E3E").pack(pady=(15, 2))
+                tk.Label(win, text="Lengkapi data produk baru berikut:", font=("Calibri", 9), bg="white", fg="#888888").pack(pady=(0, 10))
+
+                f = tk.Frame(win, bg="white")
+                f.pack(padx=20, fill=tk.X)
+
+                tk.Label(f, text="Nama Produk:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w", pady=4)
+                e_nama = tk.Entry(f, bg="white", fg="black", width=25)
+                e_nama.grid(row=0, column=1, pady=4)
+                e_nama.insert(0, nama_awal)
+
+                tk.Label(f, text="Kategori:", bg="white", fg="#333333").grid(row=1, column=0, sticky="w", pady=4)
+                cb_kategori = ttk.Combobox(f, values=["Obat", "Alkes", "BHP"], width=22)
+                cb_kategori.grid(row=1, column=1, pady=4)
+                cb_kategori.set("Obat")
+
+                tk.Label(f, text="Harga Jual:", bg="white", fg="#333333").grid(row=2, column=0, sticky="w", pady=4)
+                e_harga = tk.Entry(f, bg="white", fg="black", width=25)
+                e_harga.grid(row=2, column=1, pady=4)
+                e_harga.insert(0, harga_awal)
+
+                tk.Label(f, text="Tgl Exp (YYYY-MM-DD):", bg="white", fg="#333333").grid(row=3, column=0, sticky="w", pady=4)
+                e_exp = tk.Entry(f, bg="white", fg="black", width=25)
+                e_exp.grid(row=3, column=1, pady=4)
+
+                def simpan_popup():
+                    nama = e_nama.get().strip()
+                    harga_s = e_harga.get().strip()
+                    if not nama:
+                        msgbox.showwarning("Peringatan", "Nama produk wajib diisi!")
+                        return
+                    if not harga_s.isdigit():
+                        msgbox.showwarning("Peringatan", "Harga jual harus berupa angka!")
+                        return
+                    try:
+                        db.add_product(nama, cb_kategori.get(), int(harga_s), 0, e_exp.get().strip() or None)
+                    except Exception as e:
+                        msgbox.showerror("Database Error", f"Gagal menyimpan produk:\n{e}")
+                        return
+                    result["success"] = True
+                    result["nama"] = nama
+                    win.destroy()
+
+                f_btn = tk.Frame(win, bg="white")
+                f_btn.pack(pady=15)
+                CustomButton(f_btn, text="Simpan Produk", command=simpan_popup, bg="#34A853").pack(side=tk.LEFT, padx=5)
+                CustomButton(f_btn, text="Batal", command=win.destroy, bg="#D84315").pack(side=tk.LEFT, padx=5)
+
+                win.wait_window()
+                return result
+
             def simpan_pembelian():
                 supplier_nama = cb_supplier.get().strip()
                 produk_nama = cb_produk.get().strip()
                 qty_s = ent_qty.get().strip()
                 harga_s = ent_harga.get().strip() or "0"
-                tanggal = ent_tanggal.get().strip()
+                tanggal = ent_beli.get_date_str()
                 catatan = ent_catatan.get().strip()
 
                 if not supplier_nama or not produk_nama:
@@ -783,15 +991,37 @@ def main_app():
                     msgbox.showwarning("Peringatan", "Harga Beli harus berupa angka!")
                     return
 
+                # Kalau supplier belum terdaftar, minta lengkapi datanya dulu lewat popup
+                supplier_exists = any(s.lower() == supplier_nama.lower() for s in all_supplier_names)
+                if not supplier_exists:
+                    hasil = prompt_supplier_baru(supplier_nama)
+                    if not hasil["success"]:
+                        return  # dibatalkan
+                    supplier_nama = hasil["nama"]
+                    suppliers_cache[:] = db.get_all_suppliers()
+                    all_supplier_names[:] = [s["nama"] for s in suppliers_cache]
+                    cb_supplier['values'] = all_supplier_names
+
+                # Kalau produk belum terdaftar, minta lengkapi datanya dulu lewat popup
                 prod = db.get_product_by_name(produk_nama)
                 if not prod:
-                    msgbox.showwarning("Peringatan", "Produk tidak ditemukan di Kelola Produk!")
+                    hasil = prompt_produk_baru(produk_nama, harga_s)
+                    if not hasil["success"]:
+                        return  # dibatalkan
+                    produk_nama = hasil["nama"]
+                    prod = db.get_product_by_name(produk_nama)
+                    products_cache[:] = db.get_all_products()
+                    all_product_names[:] = [p["nama"] for p in products_cache]
+                    cb_produk['values'] = all_product_names
+
+                if not prod:
+                    msgbox.showerror("Error", "Produk gagal ditemukan setelah didaftarkan.")
                     return
 
                 try:
                     db.process_pembelian(
                         prod["id"], produk_nama, supplier_nama,
-                        int(qty_s), int(harga_s), tanggal or None, catatan
+                        int(qty_s), int(harga_s), tanggal, catatan
                     )
                 except Exception as e:
                     msgbox.showerror("Database Error", f"Gagal menyimpan pembelian:\n{e}")
@@ -800,25 +1030,22 @@ def main_app():
                 refresh()
                 cb_supplier.set(""); cb_produk.set("")
                 ent_qty.delete(0, tk.END); ent_harga.delete(0, tk.END); ent_catatan.delete(0, tk.END)
-                ent_tanggal.delete(0, tk.END); ent_tanggal.insert(0, datetime.now().strftime("%Y-%m-%d"))
+                ent_beli.set_date(datetime.now())
                 msgbox.showinfo("Sukses", f"Pembelian {qty_s} {produk_nama} dari {supplier_nama} berhasil dicatat, stok otomatis bertambah!")
 
             def hapus_pembelian():
                 selected = tree.selection()
                 if selected:
-                    if msgbox.askyesno("Konfirmasi", "Hapus riwayat pembelian ini? (Stok produk TIDAK otomatis dikurangi kembali)"):
+                    if msgbox.askyesno("Konfirmasi", "Hapus riwayat pembelian ini?"):
                         db.delete_pembelian(int(selected[0]))
                         refresh()
 
-            btn_p = CustomButton(f_form, text="Catat Pembelian", command=simpan_pembelian, bg="#34A853")
-            btn_p.grid(row=1, column=4, rowspan=2, padx=10)
-
-            btn_h = CustomButton(content, text="🗑 Hapus Riwayat Selected", command=hapus_pembelian, bg="#D84315")
-            btn_h.pack(anchor="w")
+            CustomButton(f_form, text="Catat Pembelian", command=simpan_pembelian, bg="#34A853").grid(row=1, column=4, rowspan=2, padx=10)
+            CustomButton(content, text="🗑 Hapus Riwayat Selected", command=hapus_pembelian, bg="#D84315").pack(anchor="w")
 
             refresh()
 
-        # 8. STOK OPNAME
+        # 9. STOK OPNAME
         def show_stok_opname():
             clear_content()
             tk.Label(content, text="Stok Opname (Penyesuaian Fisik)", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
@@ -826,35 +1053,32 @@ def main_app():
             f_form = tk.Frame(content, bg="white")
             f_form.pack(fill=tk.X, pady=5)
 
-            tk.Label(f_form, text="Pilih Item:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w")
+            tk.Label(f_form, text="Pilih Item:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w", pady=2)
             all_item_names = [p["nama"] for p in db.get_all_products()]
-            cb_item = ttk.Combobox(f_form, values=all_item_names, width=20)
-            cb_item.grid(row=0, column=1, padx=5, pady=5)
+            cb_item = ttk.Combobox(f_form, values=all_item_names, width=18)
+            cb_item.grid(row=0, column=1, padx=(5, 15), pady=2, sticky="w")
 
             def on_keyrelease_item(event):
-                if event.keysym in ("Up", "Down", "Return", "Escape"): return
+                if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
                 typed = cb_item.get().lower()
-                if typed == '':
-                    cb_item['values'] = all_item_names
-                else:
-                    filtered = [item for item in all_item_names if typed in item.lower()]
-                    cb_item['values'] = filtered
-                    cb_item.event_generate('<Down>')
+                cb_item['values'] = all_item_names if typed == '' else [item for item in all_item_names if typed in item.lower()]
 
             cb_item.bind('<KeyRelease>', on_keyrelease_item)
 
-            tk.Label(f_form, text="Stok Sistem:", bg="white", fg="#333333").grid(row=0, column=2, padx=5)
-            lbl_sys_stok = tk.Label(f_form, text="0", bg="#E0E0E0", fg="black", width=8, font=("Calibri", 10, "bold"))
-            lbl_sys_stok.grid(row=0, column=3, padx=5)
+            tk.Label(f_form, text="Stok Sistem:", bg="white", fg="#333333").grid(row=0, column=2, sticky="w", pady=2)
+            lbl_sys_stok = tk.Label(f_form, text="0", bg="#E0E0E0", fg="black", width=6, font=("Calibri", 10, "bold"))
+            lbl_sys_stok.grid(row=0, column=3, padx=(5, 15), pady=2, sticky="w")
 
-            tk.Label(f_form, text="Stok Fisik:", bg="white", fg="#333333").grid(row=0, column=4, padx=5)
-            ent_fisik = tk.Entry(f_form, width=8, bg="white", fg="black")
-            ent_fisik.grid(row=0, column=5, padx=5)
+            tk.Label(f_form, text="Stok Fisik:", bg="white", fg="#333333").grid(row=0, column=4, sticky="w", pady=2)
+            ent_fisik = tk.Entry(f_form, width=6, bg="white", fg="black")
+            ent_fisik.grid(row=0, column=5, padx=(5, 15), pady=2, sticky="w")
 
-            tk.Label(f_form, text="Tgl Opname (YYYY-MM-DD):", bg="white", fg="#333333").grid(row=1, column=0, sticky="w", pady=(8, 0))
-            ent_tgl_opname = tk.Entry(f_form, width=15, bg="white", fg="black")
-            ent_tgl_opname.grid(row=1, column=1, padx=5, pady=(8, 0), sticky="w")
-            ent_tgl_opname.insert(0, datetime.now().strftime("%Y-%m-%d"))
+            tk.Label(f_form, text="Tgl Stok Opname:", bg="white", fg="#333333").grid(row=0, column=6, sticky="w", pady=2)
+            ent_tgl_opname = DateSelector(f_form)
+            ent_tgl_opname.grid(row=0, column=7, padx=5, pady=2, sticky="w")
+
+            btn_container = tk.Frame(f_form, bg="white")
+            btn_container.grid(row=1, column=0, columnspan=8, sticky="w", pady=(10, 5))
 
             def auto_load_stok(event=None):
                 p = db.get_product_by_name(cb_item.get())
@@ -888,40 +1112,128 @@ def main_app():
             ent_search.bind("<KeyRelease>", lambda e: refresh())
 
             def simpan_opname():
-                p_name = cb_item.get()
-                fisik_s = ent_fisik.get()
-                tgl_opname = ent_tgl_opname.get().strip()
+                p_name = cb_item.get().strip()
+                fisik_s = ent_fisik.get().strip()
+                tgl_opname = ent_tgl_opname.get_date_str()
                 prod = db.get_product_by_name(p_name)
 
-                if prod and fisik_s.isdigit():
-                    fisik = int(fisik_s)
-                    stok_sistem = prod["stok"]
-                    selisih = fisik - stok_sistem
+                if not prod:
+                    msgbox.showwarning("Peringatan", "Pilih atau masukkan barang yang valid!")
+                    return
 
-                    db.update_product_stok(prod["id"], fisik)
-                    db.add_stok_opname(p_name, stok_sistem, fisik, selisih, tgl_opname or None)
+                if not fisik_s.isdigit():
+                    msgbox.showwarning("Peringatan", "Stok fisik harus berupa angka positif!")
+                    return
+
+                fisik = int(fisik_s)
+                stok_sistem = prod["stok"]
+                selisih = fisik - stok_sistem
+
+                try:
+                    # 1. Catat riwayat opname beserta tanggal pilihan UI
+                    db.add_stok_opname(p_name, stok_sistem, fisik, selisih, tgl_opname)
+                    
+                    # 2. Update stok & log mutasi riwayat_stok sesuai tanggal pilihan UI
+                    db.process_stok_opname(prod["id"], p_name, fisik, f"Opname Tanggal {tgl_opname}", tgl_opname)
 
                     refresh()
                     cb_item.set("")
                     lbl_sys_stok.config(text="0")
                     ent_fisik.delete(0, tk.END)
-                    ent_tgl_opname.delete(0, tk.END)
-                    ent_tgl_opname.insert(0, datetime.now().strftime("%Y-%m-%d"))
-                    msgbox.showinfo("Sukses", f"Stok {p_name} diperbarui menjadi {fisik}!")
+                    ent_tgl_opname.set_date(datetime.now())
 
+                    status_selisih = f"Selisih Lebih: +{selisih}" if selisih > 0 else (f"Selisih Kurang: {selisih}" if selisih < 0 else "Stok Sesuai (0)")
+                    msgbox.showinfo("Sukses", f"Stok Opname Berhasil!\nStok {p_name} diperbarui menjadi {fisik}.\nStatus: {status_selisih}")
+                except Exception as e:
+                    msgbox.showerror("Database Error", f"Gagal memproses Stok Opname:\n{e}")
+
+                    
             def hapus_opname():
                 selected = tree.selection()
                 if selected:
                     db.delete_stok_opname(int(selected[0]))
                     refresh()
 
-            btn_p = CustomButton(f_form, text="Proses Opname", command=simpan_opname, bg="#34A853")
-            btn_p.grid(row=0, column=6, padx=5)
-            
-            btn_h = CustomButton(content, text="🗑 Hapus Riwayat Selected", command=hapus_opname, bg="#D84315")
-            btn_h.pack(anchor="w")
+            CustomButton(btn_container, text="Proses Opname", command=simpan_opname, bg="#34A853").pack(side=tk.LEFT)
+            CustomButton(content, text="🗑 Hapus Riwayat Selected", command=hapus_opname, bg="#D84315").pack(anchor="w")
             
             refresh()
+
+        # 10. LAPORAN PENJUALAN
+        def show_laporan_penjualan():
+            clear_content()
+            tk.Label(content, text="📈 Laporan Penjualan & Analisis Omzet", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
+
+            f_filter = tk.Frame(content, bg="white")
+            f_filter.pack(fill=tk.X, pady=5)
+
+            tgl_hari_ini = datetime.now()
+            tgl_awal_bulan = datetime.now() - timedelta(days=30)
+
+            tk.Label(f_filter, text="Dari Tanggal:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w")
+            ent_tgl_mulai = DateSelector(f_filter, default_date=tgl_awal_bulan)
+            ent_tgl_mulai.grid(row=0, column=1, padx=5)
+
+            tk.Label(f_filter, text="Sampai Tanggal:", bg="white", fg="#333333").grid(row=0, column=2, padx=(10, 0), sticky="w")
+            ent_tgl_selesai = DateSelector(f_filter, default_date=tgl_hari_ini)
+            ent_tgl_selesai.grid(row=0, column=3, padx=5)
+
+            f_cards = tk.Frame(content, bg="white")
+            f_cards.pack(fill=tk.X, pady=10)
+
+            lbl_omzet_val = tk.Label(f_cards, text="Total Omzet: Rp 0", font=("Calibri", 16, "bold"), bg="#1E8E3E", fg="white", padx=15, pady=10)
+            lbl_omzet_val.pack(side=tk.LEFT, padx=(0, 10))
+
+            lbl_qty_val = tk.Label(f_cards, text="Total Terjual: 0 Item", font=("Calibri", 16, "bold"), bg="#00838F", fg="white", padx=15, pady=10)
+            lbl_qty_val.pack(side=tk.LEFT)
+
+            f_grid = tk.Frame(content, bg="white")
+            f_grid.pack(fill=tk.BOTH, expand=True, pady=10)
+
+            f_top = tk.LabelFrame(f_grid, text="🏆 Top 5 Produk Terlaris", font=("Calibri", 11, "bold"), bg="white", fg="#1E8E3E", padx=10, pady=10)
+            f_top.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 10))
+
+            tree_top = ttk.Treeview(f_top, columns=("Produk", "Terjual", "Omzet"), show="headings", height=8)
+            tree_top.heading("Produk", text="Produk"); tree_top.column("Produk", width=130, anchor="w")
+            tree_top.heading("Terjual", text="Qty"); tree_top.column("Terjual", width=50, anchor="center")
+            tree_top.heading("Omzet", text="Omzet"); tree_top.column("Omzet", width=100, anchor="e")
+            tree_top.pack(fill=tk.BOTH, expand=True)
+
+            f_trans = tk.LabelFrame(f_grid, text="📋 Riwayat Transaksi Lengkap", font=("Calibri", 11, "bold"), bg="white", fg="#1E8E3E", padx=10, pady=10)
+            f_trans.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+            tree_trans = ttk.Treeview(f_trans, columns=("Waktu", "Pasien", "Produk", "Qty", "Total"), show="headings", height=8)
+            tree_trans.heading("Waktu", text="Waktu"); tree_trans.column("Waktu", width=130, anchor="center")
+            tree_trans.heading("Pasien", text="Pasien"); tree_trans.column("Pasien", width=100, anchor="w")
+            tree_trans.heading("Produk", text="Produk"); tree_trans.column("Produk", width=120, anchor="w")
+            tree_trans.heading("Qty", text="Qty"); tree_trans.column("Qty", width=45, anchor="center")
+            tree_trans.heading("Total", text="Total"); tree_trans.column("Total", width=90, anchor="e")
+            tree_trans.pack(fill=tk.BOTH, expand=True)
+
+            def filter_laporan():
+                tgl_m = ent_tgl_mulai.get_date_str()
+                tgl_s = ent_tgl_selesai.get_date_str()
+
+                try:
+                    data = db.get_laporan_penjualan(tgl_m, tgl_s)
+                except Exception as e:
+                    msgbox.showerror("Error", f"Gagal memuat laporan penjualan:\n{e}")
+                    return
+
+                lbl_omzet_val.config(text=f"Total Omzet: Rp {data['total_omzet']:,}")
+                lbl_qty_val.config(text=f"Total Terjual: {data['total_item']:,} Item")
+
+                for r in tree_top.get_children(): tree_top.delete(r)
+                for tp in data["top_products"]:
+                    tree_top.insert("", tk.END, values=(tp["produk"], tp["total_qty"], f"Rp {tp['total_penjualan']:,}"))
+
+                for r in tree_trans.get_children(): tree_trans.delete(r)
+                for tr in data["transaksi"]:
+                    waktu_str = tr["waktu"].strftime("%Y-%m-%d %H:%M")
+                    tree_trans.insert("", tk.END, values=(waktu_str, tr["pasien"], tr["produk"], tr["qty"], f"Rp {tr['total']:,}"))
+
+            CustomButton(f_filter, text="🔍 Tampilkan Laporan", command=filter_laporan, bg="#34A853").grid(row=0, column=4, padx=10)
+            filter_laporan()
 
         # NAVIGATION SIDEBAR
         def btn_nav(txt, cmd):
@@ -942,6 +1254,9 @@ def main_app():
             btn_nav("🛍️ Pembelian Barang", show_pembelian).pack(fill=tk.X)
             btn_nav("⚖️ Stok Opname", show_stok_opname).pack(fill=tk.X)
 
+        if user_role in ["Admin", "Kasir", "Apoteker"]:
+            btn_nav("📈 Laporan Penjualan", show_laporan_penjualan).pack(fill=tk.X)
+
         if user_role == "Admin":
             btn_nav("👤 Kelola User", show_kelola_user).pack(fill=tk.X)
 
@@ -949,4 +1264,12 @@ def main_app():
 
     show_dashboard_layout()
     apply_responsive_styles(root)
+
+    def on_closing():
+        root.quit()
+        root.destroy()
+        sys.exit(0)
+
+    root.protocol("WM_DELETE_WINDOW", on_closing)
+
     root.mainloop()
