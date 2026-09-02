@@ -1,10 +1,3 @@
-"""
-db.py - Lapisan akses database PostgreSQL untuk ApoLink.
-
-Semua kredensial diambil dari environment variable (lihat .env.example).
-Jangan hardcode username/password database di sini.
-"""
-
 import os
 from datetime import datetime
 
@@ -24,7 +17,6 @@ DB_CONFIG = {
 
 
 def get_connection():
-    """Buka koneksi baru ke PostgreSQL. Baris dikembalikan sebagai dict (RealDictRow)."""
     return psycopg2.connect(cursor_factory=psycopg2.extras.RealDictCursor, **DB_CONFIG)
 
 
@@ -59,8 +51,8 @@ def delete_user(user_id):
         cur.execute("DELETE FROM users WHERE id=%s", (user_id,))
         conn.commit()
 
+
 def update_user_password(user_id, new_password):
-    """Memperbarui kata sandi user berdasarkan user_id."""
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
             "UPDATE users SET password = %s WHERE id = %s",
@@ -159,7 +151,6 @@ def get_all_stok_opname():
 
 
 def add_stok_opname(produk_nama, stok_sistem, stok_fisik, selisih, tanggal_opname=None):
-    """Menyimpan record pencatatan stok opname beserta tanggal penyesuaiannya."""
     waktu_input = tanggal_opname if tanggal_opname else datetime.now()
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
@@ -171,18 +162,12 @@ def add_stok_opname(produk_nama, stok_sistem, stok_fisik, selisih, tanggal_opnam
 
 
 def process_stok_opname(product_id, produk_nama, stok_fisik, keterangan_opname="Penyesuaian Stok Opname", tanggal_opname=None):
-    """
-    Menyesuaikan stok produk berdasarkan hasil opname fisik 
-    dan mencatat selisihnya ke dalam tabel `riwayat_stok`.
-    """
     waktu_sekarang = tanggal_opname if tanggal_opname else datetime.now()
     with get_connection() as conn, conn.cursor() as cur:
-        # 1. Ambil stok awal dari sistem
         cur.execute("SELECT stok FROM products WHERE id=%s FOR UPDATE", (product_id,))
         prod = cur.fetchone()
         stok_awal = prod["stok"] if prod else 0
         
-        # 2. Hitung selisih masuk/keluar
         selisih = stok_fisik - stok_awal
         qty_masuk = selisih if selisih > 0 else 0
         qty_keluar = abs(selisih) if selisih < 0 else 0
@@ -190,10 +175,8 @@ def process_stok_opname(product_id, produk_nama, stok_fisik, keterangan_opname="
         if selisih == 0:
             return False
 
-        # 3. Update master produk dengan stok hasil opname
         cur.execute("UPDATE products SET stok = %s WHERE id=%s", (stok_fisik, product_id))
 
-        # 4. Catat mutasi stok opname ke riwayat_stok
         cur.execute(
             "INSERT INTO riwayat_stok (produk_id, produk_nama, waktu, tipe_transaksi, keterangan, stok_awal, qty_masuk, qty_keluar, stok_akhir) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -222,7 +205,6 @@ def delete_stok_opname(opname_id):
 # ================= RIWAYAT STOK =================
 
 def get_riwayat_stok_by_produk(nama_produk):
-    """Mengambil log mutasi riwayat stok berdasarkan nama produk."""
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT waktu, tipe_transaksi, keterangan, stok_awal, qty_masuk, qty_keluar, stok_akhir "
@@ -231,36 +213,29 @@ def get_riwayat_stok_by_produk(nama_produk):
         )
         return cur.fetchall()
 
+
 # ================= TRANSAKSI (PENJUALAN KASIR) =================
 
-def process_sale(cart_items, nama_pasien):
-    """
-    Proses transaksi kasir: kurangi stok produk & catat ke tabel `transaksi` 
-    serta log mutasi stok ke tabel `riwayat_stok` (All-in-one Transaction).
-    """
+def process_sale(cart_items, nama_pasien, resep_id=None):
     waktu = datetime.now()
     with get_connection() as conn, conn.cursor() as cur:
         for item in cart_items:
-            # 1. Ambil stok saat ini (stok_awal)
             cur.execute("SELECT stok FROM products WHERE id=%s FOR UPDATE", (item["id"],))
             prod = cur.fetchone()
             stok_awal = prod["stok"] if prod else 0
             stok_akhir = stok_awal - item["qty"]
 
-            # 2. Update stok di tabel master produk
             cur.execute(
                 "UPDATE products SET stok = %s WHERE id=%s",
                 (stok_akhir, item["id"]),
             )
 
-            # 3. Catat transaksi penjualan
             cur.execute(
                 "INSERT INTO transaksi (waktu, pasien, produk, qty, total) "
                 "VALUES (%s, %s, %s, %s, %s)",
                 (waktu, nama_pasien, item["nama"], item["qty"], item["subtotal"]),
             )
 
-            # 4. Catat log mutasi ke riwayat_stok
             cur.execute(
                 "INSERT INTO riwayat_stok (produk_id, produk_nama, waktu, tipe_transaksi, keterangan, stok_awal, qty_masuk, qty_keluar, stok_akhir) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
@@ -276,10 +251,15 @@ def process_sale(cart_items, nama_pasien):
                     stok_akhir,
                 ),
             )
+
+        if resep_id:
+            cur.execute("UPDATE resep SET status = 'COMPLETED' WHERE id = %s", (resep_id,))
+
         conn.commit()
     return waktu
 
-# ================= PEMBELIAN (RESTOCK DARI SUPPLIER) =================
+
+# ================= PEMBELIAN =================
 
 def get_all_pembelian():
     with get_connection() as conn, conn.cursor() as cur:
@@ -312,113 +292,126 @@ def get_transaksi_by_pasien(nama_pasien):
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT waktu, produk, qty, total FROM transaksi "
-            "WHERE pasien=%s ORDER BY waktu DESC",
+            "WHERE LOWER(pasien)=LOWER(%s) ORDER BY waktu DESC",
             (nama_pasien,),
         )
         return cur.fetchall()
 
 
 def get_laporan_penjualan(tgl_mulai, tgl_selesai):
-    """
-    Mengembalikan ringkasan laporan penjualan dalam rentang tanggal tertentu:
-    total omzet, total item terjual, top 5 produk terlaris, dan daftar transaksi lengkap.
-    """
     with get_connection() as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT waktu, pasien, produk, qty, total FROM transaksi "
-            "WHERE waktu::date BETWEEN %s AND %s ORDER BY waktu DESC",
+            "SELECT id, waktu, pasien, produk, qty, total "
+            "FROM transaksi WHERE DATE(waktu) >= %s AND DATE(waktu) <= %s "
+            "ORDER BY waktu DESC",
             (tgl_mulai, tgl_selesai),
         )
-        rows = cur.fetchall()
+        transaksi = cur.fetchall()
 
-    total_omzet = sum(r["total"] for r in rows)
-    total_item = sum(r["qty"] for r in rows)
+        total_omzet = sum(t["total"] for t in transaksi)
+        total_item = sum(t["qty"] for t in transaksi)
 
-    agregat = {}
-    for r in rows:
-        key = r["produk"]
-        if key not in agregat:
-            agregat[key] = {"produk": key, "total_qty": 0, "total_penjualan": 0}
-        agregat[key]["total_qty"] += r["qty"]
-        agregat[key]["total_penjualan"] += r["total"]
-
-    top_products = sorted(agregat.values(), key=lambda x: x["total_qty"], reverse=True)[:5]
-
-    return {
-        "total_omzet": total_omzet,
-        "total_item": total_item,
-        "top_products": top_products,
-        "transaksi": rows,
-    }
-
-
-# ================= PROSES PEMBELIAN (UPDATE STOK + LOG) =================
-
-def process_pembelian(product_id, produk_nama, supplier_nama, qty, harga_beli, tanggal, catatan):
-    """
-    Catat pembelian dari supplier, tambahkan stok produk, 
-    dan log mutasi ke tabel `riwayat_stok`.
-    """
-    waktu_sekarang = datetime.now()
-    with get_connection() as conn, conn.cursor() as cur:
-        # 1. Ambil stok saat ini
-        cur.execute("SELECT stok FROM products WHERE id=%s FOR UPDATE", (product_id,))
-        prod = cur.fetchone()
-        stok_awal = prod["stok"] if prod else 0
-        stok_akhir = stok_awal + qty
-
-        # 2. Update master produk
-        cur.execute("UPDATE products SET stok = %s WHERE id=%s", (stok_akhir, product_id))
-
-        # 3. Catat pembelian
         cur.execute(
-            "INSERT INTO pembelian (supplier_nama, produk_nama, qty, harga_beli, tanggal, catatan) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
-            (supplier_nama, produk_nama, qty, harga_beli, tanggal, catatan),
+            "SELECT produk, SUM(qty) as total_qty, SUM(total) as total_penjualan "
+            "FROM transaksi WHERE DATE(waktu) >= %s AND DATE(waktu) <= %s "
+            "GROUP BY produk ORDER BY total_qty DESC LIMIT 5",
+            (tgl_mulai, tgl_selesai),
         )
+        top_products = cur.fetchall()
 
-        # 4. Catat log mutasi ke riwayat_stok
+        return {
+            "transaksi": transaksi,
+            "total_omzet": total_omzet,
+            "total_item": total_item,
+            "top_products": top_products,
+        }
+
+
+# ================= RESEP PASIEN (BARU) =================
+
+def create_resep_step1(nama_pasien, dokter_penulis, tanggal_resep, item_list):
+    now = datetime.now()
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) FROM resep")
+        cnt = cur.fetchone()["count"] + 1
+        nomor_resep = f"RXP-{cnt:03d}"
+
         cur.execute(
-            "INSERT INTO riwayat_stok (produk_id, produk_nama, waktu, tipe_transaksi, keterangan, stok_awal, qty_masuk, qty_keluar, stok_akhir) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            (
-                product_id,
-                produk_nama,
-                waktu_sekarang,
-                "Restock (Masuk)",
-                f"Pembelian - Supplier: {supplier_nama}",
-                stok_awal,
-                qty,
-                0,
-                stok_akhir,
-            ),
+            "INSERT INTO resep (nomor_resep, nama_pasien, dokter_penulis, tanggal_resep, status, preparation_start_time, hasil_telaah) "
+            "VALUES (%s, %s, %s, %s, 'DRAFT', %s, 'Belum Telaah') RETURNING id",
+            (nomor_resep, nama_pasien, dokter_penulis, tanggal_resep, now),
+        )
+        resep_id = cur.fetchone()["id"]
+
+        for item in item_list:
+            cur.execute(
+                "INSERT INTO resep_detail (resep_id, produk_id, produk_nama, dosis_aturan, jumlah, harga_satuan, subtotal) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (
+                    resep_id,
+                    item["produk_id"],
+                    item["produk_nama"],
+                    item["dosis_aturan"],
+                    item["jumlah"],
+                    item["harga_satuan"],
+                    item["subtotal"],
+                ),
+            )
+        conn.commit()
+        return resep_id, nomor_resep
+
+
+def update_resep_telaah(resep_id, hasil_telaah="Lengkap (Pass)"):
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE resep SET status = 'REVIEWED', hasil_telaah = %s WHERE id = %s",
+            (hasil_telaah, resep_id),
         )
         conn.commit()
 
-# function buat dashboard
-def get_dashboard_metrics(self):
-    cursor = self.conn.cursor()
-    
-    # Total varian produk & produk stok menipis (<= 5)
-    cursor.execute("SELECT COUNT(*), SUM(CASE WHEN stok <= 5 THEN 1 ELSE 0 END) FROM products")
-    row_prod = cursor.fetchone()
-    total_produk = row_prod[0] or 0
-    stok_menipis = row_prod[1] or 0
 
-    # Total Penjualan & Transaksi Hari Ini
-    today = datetime.now().strftime("%Y-%m-%d")
-    cursor.execute("""
-        SELECT COUNT(DISTINCT id), SUM(total_harga) 
-        FROM penjualan 
-        WHERE DATE(tanggal) = ?
-    """, (today,))
-    row_penjualan = cursor.fetchone()
-    total_tx_today = row_penjualan[0] or 0
-    omset_today = row_penjualan[1] or 0
+def complete_resep_validation(resep_id):
+    now = datetime.now()
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT preparation_start_time FROM resep WHERE id = %s", (resep_id,))
+        rsp = cur.fetchone()
+        start_time = rsp["preparation_start_time"] if rsp else now
+        
+        duration_sec = int((now - start_time).total_seconds())
 
-    return {
-        "total_produk": total_produk,
-        "stok_menipis": stok_menipis,
-        "tx_today": total_tx_today,
-        "omset_today": omset_today
-    }
+        cur.execute(
+            "UPDATE resep SET status = 'READY_TO_BILL', preparation_end_time = %s, duration_seconds = %s WHERE id = %s",
+            (now, duration_sec, resep_id),
+        )
+        cur.execute("UPDATE resep_detail SET is_validated = TRUE WHERE resep_id = %s", (resep_id,))
+        conn.commit()
+
+
+def get_all_resep():
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, nomor_resep, nama_pasien, dokter_penulis, tanggal_resep, status, "
+            "preparation_start_time, preparation_end_time, duration_seconds, hasil_telaah "
+            "FROM resep ORDER BY id DESC"
+        )
+        return cur.fetchall()
+
+
+def get_resep_by_id(resep_id):
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM resep WHERE id = %s", (resep_id,))
+        rsp = cur.fetchone()
+        if rsp:
+            cur.execute("SELECT * FROM resep_detail WHERE resep_id = %s ORDER BY id", (resep_id,))
+            rsp["items"] = cur.fetchall()
+        return rsp
+
+
+def get_resep_ready_to_bill():
+    with get_connection() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM resep WHERE status = 'READY_TO_BILL' ORDER BY id DESC")
+        reseps = cur.fetchall()
+        for r in reseps:
+            cur.execute("SELECT * FROM resep_detail WHERE resep_id = %s", (r["id"],))
+            r["items"] = cur.fetchall()
+        return reseps
