@@ -400,7 +400,7 @@ def main_app():
                     msgbox.showerror("Database Error", f"Gagal menyimpan transaksi:\n{e}")
                     return
 
-                waktu = waktu_dt.strftime("%Y-%m-%d %H:%M:%S")
+                waktu = waktu_dt.strftime("%Y-%m-%d %H:%M:%S") if hasattr(waktu_dt, 'strftime') else str(waktu_dt)
 
                 win_struk = tk.Toplevel(root)
                 win_struk.title("Struk Transaksi - ApoLink")
@@ -595,7 +595,7 @@ def main_app():
                     tree_h.insert("", tk.END, values=("-", "-", "Belum ada mutasi stok", "-", "-", "-", "-"))
                 else:
                     for r in riwayat:
-                        waktu_str = r["waktu"].strftime("%Y-%m-%d %H:%M:%S")
+                        waktu_str = r["waktu"].strftime("%Y-%m-%d %H:%M:%S") if hasattr(r["waktu"], 'strftime') else str(r["waktu"])
                         tree_h.insert("", tk.END, values=(
                             waktu_str, r["tipe_transaksi"], r["keterangan"] or "-",
                             r["stok_awal"], r["qty_masuk"], r["qty_keluar"], r["stok_akhir"]
@@ -622,7 +622,7 @@ def main_app():
             
             refresh_table()
 
-# 4. KELOLA USER
+        # 4. KELOLA USER
         def show_kelola_user():
             clear_content()
             tk.Label(content, text="Kelola Akun Pengguna / User System", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
@@ -873,7 +873,7 @@ def main_app():
                     tree_h.insert("", tk.END, values=("-", "Belum ada riwayat transaksi", "-", "-"))
                 else:
                     for h in filtered_history:
-                        waktu_str = h["waktu"].strftime("%Y-%m-%d %H:%M:%S")
+                        waktu_str = h["waktu"].strftime("%Y-%m-%d %H:%M:%S") if hasattr(h["waktu"], 'strftime') else str(h["waktu"])
                         tree_h.insert("", tk.END, values=(waktu_str, h["produk"], h["qty"], f"Rp {h['total']:,}"))
 
                 CustomButton(win_hist, text="Tutup / Close", command=win_hist.destroy, bg="#D84315", padx=15, pady=4).pack(pady=(0, 15))
@@ -1032,11 +1032,11 @@ def main_app():
                 count = 0
                 for pb in db.get_all_pembelian():
                     tgl_dt = pb["tanggal"]
-                    tgl_str = tgl_dt.strftime("%Y-%m-%d") if tgl_dt else "-"
+                    tgl_str = tgl_dt.strftime("%Y-%m-%d") if hasattr(tgl_dt, 'strftime') else (str(tgl_dt) if tgl_dt else "-")
                     
-                    p_day = tgl_dt.strftime("%d") if tgl_dt else ""
-                    p_month = tgl_dt.strftime("%m") if tgl_dt else ""
-                    p_year = tgl_dt.strftime("%Y") if tgl_dt else ""
+                    p_day = tgl_dt.strftime("%d") if hasattr(tgl_dt, 'strftime') else ""
+                    p_month = tgl_dt.strftime("%m") if hasattr(tgl_dt, 'strftime') else ""
+                    p_year = tgl_dt.strftime("%Y") if hasattr(tgl_dt, 'strftime') else ""
 
                     total = pb["qty"] * pb["harga_beli"]
                     catatan_str = pb["catatan"] or ""
@@ -1320,7 +1320,8 @@ def main_app():
                 keyword = ent_search.get().lower().strip()
                 for r in tree.get_children(): tree.delete(r)
                 for o in db.get_all_stok_opname():
-                    tgl_str = o["waktu"].strftime("%Y-%m-%d") if o["waktu"] else "-"
+                    waktu_val = o["waktu"]
+                    tgl_str = waktu_val.strftime("%Y-%m-%d") if hasattr(waktu_val, 'strftime') else (str(waktu_val) if waktu_val else "-")
                     haystack = f"{o['produk_nama']} {o['stok_sistem']} {o['stok_fisik']} {o['selisih']} {tgl_str}".lower()
                     if keyword and keyword not in haystack:
                         continue
@@ -1442,11 +1443,293 @@ def main_app():
 
                 for r in tree_trans.get_children(): tree_trans.delete(r)
                 for tr in data["transaksi"]:
-                    waktu_str = tr["waktu"].strftime("%Y-%m-%d %H:%M")
+                    waktu_val = tr["waktu"]
+                    waktu_str = waktu_val.strftime("%Y-%m-%d %H:%M") if hasattr(waktu_val, 'strftime') else str(waktu_val)
                     tree_trans.insert("", tk.END, values=(waktu_str, tr["pasien"], tr["produk"], tr["qty"], f"Rp {tr['total']:,}"))
 
             CustomButton(f_filter, text="🔍 Tampilkan Laporan", command=filter_laporan, bg="#34A853").grid(row=0, column=4, padx=10)
             filter_laporan()
+
+        # 11. KELOLA RESEP PASIEN
+        def show_resep():
+            clear_content()
+
+            f_top_header = tk.Frame(content, bg="white")
+            f_top_header.pack(fill=tk.X, pady=(0, 10))
+
+            tk.Label(f_top_header, text="📋 Menu Kelola Resep Pasien (Apoteker)", font=("Calibri", 18, "bold"), bg="white", fg="#1E8E3E").pack(side=tk.LEFT)
+
+            current_resep_id = [None]
+            timer_start_time = [None]
+            timer_job = [None]
+
+            notebook_resep = ttk.Notebook(content)
+            notebook_resep.pack(fill=tk.BOTH, expand=True)
+
+            tab_workflow = tk.Frame(notebook_resep, bg="white", padx=10, pady=10)
+            tab_report = tk.Frame(notebook_resep, bg="white", padx=10, pady=10)
+
+            notebook_resep.add(tab_workflow, text=" ⚡ Prosedur Pengecekan Resep Pasien ")
+            notebook_resep.add(tab_report, text=" 📊 Laporan Resep Pasien Harian ")
+
+            # --- HEADER TOMBOL CONTROL LOGIC (3 BUTTONS) ---
+            f_steps_nav = tk.Frame(tab_workflow, bg="#F0F4F8", bd=1, relief="solid", padx=10, pady=10)
+            f_steps_nav.pack(fill=tk.X, pady=(0, 15))
+
+            f_step_panels = tk.Frame(tab_workflow, bg="white")
+            f_step_panels.pack(fill=tk.BOTH, expand=True)
+
+            pasien_cache = db.get_all_pasien()
+            products_cache = db.get_all_products()
+            resep_items_cart = []
+
+            # ---------------- STEP 1 PANEL ----------------
+            pnl_step1 = tk.Frame(f_step_panels, bg="white")
+
+            f_in_s1 = tk.Frame(pnl_step1, bg="white")
+            f_in_s1.pack(fill=tk.X, pady=5)
+
+            tk.Label(f_in_s1, text="Pasien:", bg="white", fg="#333333", font=("Calibri", 10, "bold")).grid(row=0, column=0, sticky="w")
+            cb_pasien_rsp = ttk.Combobox(f_in_s1, values=[p["nama"] for p in pasien_cache], width=22)
+            cb_pasien_rsp.grid(row=0, column=1, padx=5, pady=5)
+
+            tk.Label(f_in_s1, text="Dokter:", bg="white", fg="#333333", font=("Calibri", 10, "bold")).grid(row=0, column=2, sticky="w", padx=(15, 0))
+            ent_dokter = tk.Entry(f_in_s1, width=22, bg="white", fg="black", insertbackground="black")
+            ent_dokter.grid(row=0, column=3, padx=5, pady=5)
+
+            tk.Label(f_in_s1, text="Tanggal:", bg="white", fg="#333333", font=("Calibri", 10, "bold")).grid(row=0, column=4, sticky="w", padx=(15, 0))
+            ent_tgl_rsp = DateSelector(f_in_s1)
+            ent_tgl_rsp.grid(row=0, column=5, padx=5, pady=5)
+
+            f_add_item = tk.LabelFrame(pnl_step1, text=" Tambah Obat Resep ", bg="white", fg="#333333", font=("Calibri", 10, "bold"), padx=10, pady=8)
+            f_add_item.pack(fill=tk.X, pady=10)
+
+            tk.Label(f_add_item, text="Obat:", bg="white", fg="#333333").grid(row=0, column=0)
+            cb_prod_rsp = ttk.Combobox(f_add_item, values=[p["nama"] for p in products_cache], width=20)
+            cb_prod_rsp.grid(row=0, column=1, padx=5)
+
+            tk.Label(f_add_item, text="Dosis / Aturan Pakai:", bg="white", fg="#333333").grid(row=0, column=2, padx=(10, 0))
+            ent_dosis = tk.Entry(f_add_item, width=22, bg="white", fg="black", insertbackground="black")
+            ent_dosis.grid(row=0, column=3, padx=5)
+
+            tk.Label(f_add_item, text="Jumlah Qty:", bg="white", fg="#333333").grid(row=0, column=4, padx=(10, 0))
+            ent_qty_rsp = tk.Entry(f_add_item, width=8, bg="white", fg="black", insertbackground="black")
+            ent_qty_rsp.grid(row=0, column=5, padx=5)
+
+            tree_items_s1 = ttk.Treeview(pnl_step1, columns=("Obat", "Dosis", "Qty", "Harga", "Subtotal"), show="headings", height=5)
+            for c in ("Obat", "Dosis", "Qty", "Harga", "Subtotal"):
+                tree_items_s1.heading(c, text=c)
+                tree_items_s1.column(c, anchor="center")
+            tree_items_s1.pack(fill=tk.BOTH, expand=True, pady=5)
+
+            def tambah_item_resep():
+                p_name = cb_prod_rsp.get().strip()
+                dosis = ent_dosis.get().strip()
+                qty_s = ent_qty_rsp.get().strip()
+                prod = next((p for p in products_cache if p["nama"] == p_name), None)
+
+                if not prod or not dosis or not qty_s.isdigit():
+                    msgbox.showwarning("Peringatan", "Lengkapi Obat, Dosis, dan Jumlah Qty dengan benar!")
+                    return
+                
+                q = int(qty_s)
+                sub = prod["harga"] * q
+                resep_items_cart.append({
+                    "produk_id": prod["id"], "produk_nama": p_name,
+                    "dosis_aturan": dosis, "jumlah": q,
+                    "harga_satuan": prod["harga"], "subtotal": sub
+                })
+                tree_items_s1.insert("", tk.END, values=(p_name, dosis, q, f"Rp {prod['harga']:,}", f"Rp {sub:,}"))
+                cb_prod_rsp.set(""); ent_dosis.delete(0, tk.END); ent_qty_rsp.delete(0, tk.END)
+
+            CustomButton(f_add_item, text="+ Tambah Obat", command=tambah_item_resep, bg="#00838F").grid(row=0, column=6, padx=10)
+
+            # ---------------- STEP 2 PANEL ----------------
+            pnl_step2 = tk.Frame(f_step_panels, bg="white")
+
+            tk.Label(pnl_step2, text="Form Checklist Telaah Administrasi & Klinis (Semua Mandatory)", font=("Calibri", 12, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
+
+            chk_var1 = tk.BooleanVar()
+            chk_var2 = tk.BooleanVar()
+            chk_var3 = tk.BooleanVar()
+            chk_var4 = tk.BooleanVar()
+
+            f_chk = tk.Frame(pnl_step2, bg="white")
+            f_chk.pack(anchor="w", pady=10)
+
+            c1 = tk.Checkbutton(f_chk, text="1. Keabsahan & Kelengkapan Resep (Nama Dokter, SIP, Tanggal, Pasien)", variable=chk_var1, bg="white", fg="#333333", selectcolor="white", font=("Calibri", 11))
+            c1.pack(anchor="w", pady=4)
+
+            c2 = tk.Checkbutton(f_chk, text="2. Ketepatan Dosis & Aturan Pakai Obat", variable=chk_var2, bg="white", fg="#333333", selectcolor="white", font=("Calibri", 11))
+            c2.pack(anchor="w", pady=4)
+
+            c3 = tk.Checkbutton(f_chk, text="3. Bebas Riwayat Alergi Pasien", variable=chk_var3, bg="white", fg="#333333", selectcolor="white", font=("Calibri", 11))
+            c3.pack(anchor="w", pady=4)
+
+            c4 = tk.Checkbutton(f_chk, text="4. Tidak Ada Interaksi Obat Berbahaya / Duplikasi", variable=chk_var4, bg="white", fg="#333333", selectcolor="white", font=("Calibri", 11))
+            c4.pack(anchor="w", pady=4)
+
+            # ---------------- STEP 3 PANEL ----------------
+            pnl_step3 = tk.Frame(f_step_panels, bg="white")
+
+            f_timer_box = tk.Frame(pnl_step3, bg="#E8F5E9", bd=1, relief="solid", padx=15, pady=10)
+            f_timer_box.pack(fill=tk.X, pady=(0, 10))
+
+            tk.Label(f_timer_box, text="⏱️ Real-time Timer Penyiapan Obat:", font=("Calibri", 11, "bold"), bg="#E8F5E9", fg="#2E7D32").pack(side=tk.LEFT)
+            lbl_timer_val = tk.Label(f_timer_box, text="00:00", font=("Consolas", 18, "bold"), bg="#E8F5E9", fg="#D84315")
+            lbl_timer_val.pack(side=tk.RIGHT)
+
+            tk.Label(pnl_step3, text="Checklist Validasi Fisik Obat (Centang Obat yang Telah Diambil dari Rak):", font=("Calibri", 11, "bold"), bg="white", fg="#333333").pack(anchor="w", pady=5)
+
+            f_chk_obat_list = tk.Frame(pnl_step3, bg="white")
+            f_chk_obat_list.pack(fill=tk.BOTH, expand=True, pady=5)
+
+            obat_check_vars = []
+
+            def update_timer():
+                if timer_start_time[0]:
+                    elapsed = int((datetime.now() - timer_start_time[0]).total_seconds())
+                    mins = elapsed // 60
+                    secs = elapsed % 60
+                    lbl_timer_val.config(text=f"{mins:02d}:{secs:02d}")
+                    timer_job[0] = root.after(1000, update_timer)
+
+            def switch_step(target_step):
+                for p in (pnl_step1, pnl_step2, pnl_step3):
+                    p.pack_forget()
+
+                for w in f_steps_nav.winfo_children():
+                    w.destroy()
+
+                b1_state = "normal"
+                b2_state = "normal" if current_resep_id[0] else "disabled"
+                b3_state = "normal" if (current_resep_id[0] and chk_var1.get() and chk_var2.get() and chk_var3.get() and chk_var4.get()) else "disabled"
+
+                CustomButton(f_steps_nav, text="1. Input Resep", command=lambda: switch_step(1), bg="#1E8E3E" if target_step == 1 else "#7CB342").pack(side=tk.LEFT, padx=5)
+                CustomButton(f_steps_nav, text="2. Telaah Administrasi", command=lambda: switch_step(2), bg="#1565C0" if target_step == 2 else "#42A5F5").pack(side=tk.LEFT, padx=5)
+                CustomButton(f_steps_nav, text="3. Validasi Resep & Timer", command=lambda: switch_step(3), bg="#E65100" if target_step == 3 else "#FB8C00").pack(side=tk.LEFT, padx=5)
+
+                if target_step == 1:
+                    pnl_step1.pack(fill=tk.BOTH, expand=True)
+                elif target_step == 2:
+                    pnl_step2.pack(fill=tk.BOTH, expand=True)
+                elif target_step == 3:
+                    pnl_step3.pack(fill=tk.BOTH, expand=True)
+
+            def simpan_step1():
+                p_nama = cb_pasien_rsp.get().strip()
+                dokter = ent_dokter.get().strip()
+                tgl = ent_tgl_rsp.get_date_str()
+
+                if not p_nama or not dokter or not resep_items_cart:
+                    msgbox.showwarning("Peringatan", "Lengkapi Pasien, Dokter, dan minimal 1 Obat Resep!")
+                    return
+
+                rsp_id, no_rsp = db.create_resep_step1(p_nama, dokter, tgl, resep_items_cart)
+                current_resep_id[0] = rsp_id
+                timer_start_time[0] = datetime.now()
+
+                if timer_job[0]:
+                    root.after_cancel(timer_job[0])
+                update_timer()
+
+                msgbox.showinfo("Sukses Step 1", f"Resep {no_rsp} disimpan (DRAFT). Lanjut ke Telaah Administrasi.")
+                switch_step(2)
+
+            CustomButton(pnl_step1, text="💾 Simpan & Lanjut Telaah ➡️", command=simpan_step1, bg="#1E8E3E").pack(anchor="e", pady=10)
+
+            def simpan_step2():
+                if not (chk_var1.get() and chk_var2.get() and chk_var3.get() and chk_var4.get()):
+                    msgbox.showwarning("Validation Guard", "Semua checklist telaah administrasi & klinis Wajib Dicentang!")
+                    return
+
+                db.update_resep_telaah(current_resep_id[0], "Lengkap (Pass)")
+
+                for w in f_chk_obat_list.winfo_children(): w.destroy()
+                obat_check_vars.clear()
+
+                rsp_data = db.get_resep_by_id(current_resep_id[0])
+                for idx, item in enumerate(rsp_data["items"]):
+                    var = tk.BooleanVar()
+                    obat_check_vars.append(var)
+                    cb = tk.Checkbutton(
+                        f_chk_obat_list, 
+                        text=f"  [{item['produk_nama']}] - {item['jumlah']} Qty - Dosis: {item['dosis_aturan']}", 
+                        variable=var, bg="white", fg="#333333", selectcolor="white", font=("Calibri", 11)
+                    )
+                    cb.pack(anchor="w", pady=4)
+
+                msgbox.showinfo("Sukses Step 2", "Telaah Administrasi Valid (Pass). Lanjut ke Validasi Resep & Timer.")
+                switch_step(3)
+
+            CustomButton(pnl_step2, text="💾 Simpan Telaah & Aktifkan Validasi ➡️", command=simpan_step2, bg="#1565C0").pack(anchor="e", pady=10)
+
+            def selesai_validasi_step3():
+                if not obat_check_vars or not all(v.get() for v in obat_check_vars):
+                    msgbox.showwarning("Peringatan", "Centang seluruh obat untuk memastikan validasi fisik obat telah sesuai!")
+                    return
+
+                db.complete_resep_validation(current_resep_id[0])
+
+                if timer_job[0]:
+                    root.after_cancel(timer_job[0])
+
+                msgbox.showinfo("Resep Selesai", "Validasi Fisik Selesai! Status Resep kini READY_TO_BILL (Siap Dipanggil di POS Kasir).")
+                show_resep()
+
+            CustomButton(pnl_step3, text="✅ Selesai & Validasi Resep", command=selesai_validasi_step3, bg="#E65100").pack(anchor="e", pady=10)
+
+            switch_step(1)
+
+            # --- TAB LAPORAN RESEP PASIEN HARIAN ---
+            tk.Label(tab_report, text="📊 Laporan Resep Pasien Harian (Daily Prescription Report)", font=("Calibri", 13, "bold"), bg="white", fg="#1E8E3E").pack(anchor="w", pady=(0, 10))
+
+            tree_report = ttk.Treeview(
+                tab_report, 
+                columns=("No. Resep", "Waktu Input", "Nama Pasien", "Nama Dokter", "Hasil Telaah", "Daftar Obat", "Durasi Penyiapan", "Status Validasi"), 
+                show="headings", height=12
+            )
+
+            widths = {
+                "No. Resep": 100, "Waktu Input": 120, "Nama Pasien": 130, 
+                "Nama Dokter": 130, "Hasil Telaah": 120, "Daftar Obat": 220, 
+                "Durasi Penyiapan": 120, "Status Validasi": 120
+            }
+
+            for c in widths:
+                tree_report.heading(c, text=c)
+                tree_report.column(c, width=widths[c], anchor="center" if c not in ["Daftar Obat", "Nama Pasien", "Nama Dokter"] else "w")
+
+            tree_report.pack(fill=tk.BOTH, expand=True, pady=5)
+
+            def refresh_laporan_resep():
+                for r in tree_report.get_children(): tree_report.delete(r)
+                all_rsp = db.get_all_resep()
+
+                for r in all_rsp:
+                    detail = db.get_resep_by_id(r["id"])
+                    obat_str = ", ".join([f"{it['produk_nama']} ({it['jumlah']})" for it in detail.get("items", [])])
+                    
+                    waktu_str = r["preparation_start_time"].strftime("%H:%M") if r["preparation_start_time"] else "-"
+                    dur_sec = r.get("duration_seconds")
+                    if dur_sec is not None:
+                        dur_m = dur_sec // 60
+                        dur_s = dur_sec % 60
+                        dur_str = f"{dur_m:02d}m {dur_s:02d}s"
+                    else:
+                        dur_str = "-"
+                    
+                    status_val = "Valid (Done)" if r["status"] in ["READY_TO_BILL", "COMPLETED"] else r["status"]
+
+                    tree_report.insert("", tk.END, values=(
+                        r["nomor_resep"], waktu_str, r["nama_pasien"], r["dokter_penulis"],
+                        r["hasil_telaah"], obat_str, dur_str, status_val
+                    ))
+
+            CustomButton(tab_report, text="🔄 Refresh Laporan Resep", command=refresh_laporan_resep, bg="#00838F").pack(anchor="w", pady=5)
+            refresh_laporan_resep()
+
+            switch_step(1)
 
         # NAVIGATION SIDEBAR
         def btn_nav(txt, cmd):
@@ -1461,6 +1744,7 @@ def main_app():
             btn_nav("👥 Kelola Pasien", show_pasien).pack(fill=tk.X)
 
         if user_role in ["Admin", "Apoteker"]:
+            btn_nav("📋 Kelola Resep", show_resep).pack(fill=tk.X)
             btn_nav("📦 Kelola Produk", show_produk).pack(fill=tk.X)
             btn_nav("⚠️ Lap. Kedaluwarsa", show_lap_expired).pack(fill=tk.X)
             btn_nav("🚚 Kelola Supplier", show_supplier).pack(fill=tk.X)

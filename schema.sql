@@ -75,6 +75,33 @@ CREATE TABLE IF NOT EXISTS riwayat_stok (
     stok_akhir INTEGER NOT NULL
 );
 
+-- Migration/Schema Baru untuk Fitur Resep Pasien & Penjualan Resep
+
+CREATE TABLE IF NOT EXISTS resep (
+    id SERIAL PRIMARY KEY,
+    nomor_resep VARCHAR(50) UNIQUE NOT NULL,
+    nama_pasien VARCHAR(100) NOT NULL,
+    dokter_penulis VARCHAR(100) NOT NULL,
+    tanggal_resep DATE NOT NULL,
+    status VARCHAR(30) DEFAULT 'DRAFT', -- DRAFT, REVIEWED, READY_TO_BILL, COMPLETED
+    preparation_start_time TIMESTAMP,
+    preparation_end_time TIMESTAMP,
+    duration_seconds INT DEFAULT 0,
+    hasil_telaah VARCHAR(50) DEFAULT 'Belum Telaah'
+);
+
+CREATE TABLE IF NOT EXISTS resep_detail (
+    id SERIAL PRIMARY KEY,
+    resep_id INT REFERENCES resep(id) ON DELETE CASCADE,
+    produk_id INT REFERENCES products(id),
+    produk_nama VARCHAR(100) NOT NULL,
+    dosis_aturan VARCHAR(100),
+    jumlah INT NOT NULL,
+    harga_satuan INT NOT NULL,
+    subtotal INT NOT NULL,
+    is_validated BOOLEAN DEFAULT FALSE
+);
+
 -- ================================================================
 -- Seed data awal (sama seperti data dummy yang ada di kode lama)
 -- ================================================================
@@ -98,3 +125,4 @@ INSERT INTO pasien (nama, kontak) VALUES
 
 INSERT INTO suppliers (nama, alamat, kontak) VALUES
     ('PT Kimia Farma', 'Jl. Veteran No. 10', '021-5551234');
+
