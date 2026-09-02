@@ -1543,6 +1543,7 @@ def main_app():
                 cb_prod_rsp.set(""); ent_dosis.delete(0, tk.END); ent_qty_rsp.delete(0, tk.END)
 
             CustomButton(f_add_item, text="+ Tambah Obat", command=tambah_item_resep, bg="#00838F").grid(row=0, column=6, padx=10)
+            ent_dosis.delete(0, tk.END)
 
             # ---------------- STEP 2 PANEL ----------------
             pnl_step2 = tk.Frame(f_step_panels, bg="white")
