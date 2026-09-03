@@ -280,11 +280,22 @@ def main_app():
             update_clock()
             cart.clear()
 
+            notebook = ttk.Notebook(content)
+            notebook.pack(fill=tk.BOTH, expand=True)
+
+            tab_umum = tk.Frame(notebook, bg="white")
+            tab_resep = tk.Frame(notebook, bg="white")
+            notebook.add(tab_umum, text=" 🛒 Penjualan Umum ")
+            notebook.add(tab_resep, text=" 📋 Tab Penjualan Resep (READY_TO_BILL) ")
+
+            active_resep_id = [None]
+
+            # --- TAB KASIR UMUM ---
             products_cache = db.get_all_products()
             pasien_cache = db.get_all_pasien()
             all_pasien_names = [p["nama"] for p in pasien_cache]
 
-            f_in = tk.Frame(content, bg="white")
+            f_in = tk.Frame(tab_umum, bg="white")
             f_in.pack(fill=tk.X, pady=5)
 
             tk.Label(f_in, text="Pilih Produk:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w")
@@ -292,25 +303,18 @@ def main_app():
             cb_prod = ttk.Combobox(f_in, values=all_product_names, width=20)
             cb_prod.grid(row=0, column=1, padx=5, pady=5)
 
-            def on_keyrelease(event):
-                if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
-                typed = cb_prod.get().lower()
-                cb_prod['values'] = all_product_names if typed == '' else [item for item in all_product_names if typed in item.lower()]
-
-            cb_prod.bind('<KeyRelease>', on_keyrelease)
-
             tk.Label(f_in, text="Qty:", bg="white", fg="#333333").grid(row=0, column=2, padx=(10, 0))
-            ent_qty = tk.Entry(f_in, width=5, bg="white", fg="black")
+            ent_qty = tk.Entry(f_in, width=5, bg="white", fg="black", insertbackground="black")
             ent_qty.grid(row=0, column=3, padx=5)
             ent_qty.insert(0, "1")
 
-            tree = ttk.Treeview(content, columns=("Nama", "Harga", "Qty", "Subtotal"), show="headings", height=8)
+            tree = ttk.Treeview(tab_umum, columns=("Nama", "Harga", "Qty", "Subtotal"), show="headings", height=8)
             for c in ("Nama", "Harga", "Qty", "Subtotal"):
                 tree.heading(c, text=c)
                 tree.column(c, width=120, anchor="center")
             tree.pack(fill=tk.BOTH, expand=True, pady=10)
 
-            f_pasien = tk.Frame(content, bg="white")
+            f_pasien = tk.Frame(tab_umum, bg="white")
             f_pasien.pack(fill=tk.X, pady=5)
 
             tk.Label(f_pasien, text="Nama Pasien:", bg="white", fg="#333333").grid(row=0, column=0, sticky="w")
@@ -318,26 +322,7 @@ def main_app():
             cb_pasien.grid(row=0, column=1, padx=5, pady=5)
             cb_pasien.insert(0, "Umum")
 
-            def on_keyrelease_pasien(event):
-                if event.keysym in ("Up", "Down", "Return", "Escape", "Tab"): return
-                typed = cb_pasien.get().lower()
-                cb_pasien['values'] = all_pasien_names if typed == '' else [item for item in all_pasien_names if typed in item.lower()]
-
-            cb_pasien.bind('<KeyRelease>', on_keyrelease_pasien)
-
-            tk.Label(f_pasien, text="No. WA:", bg="white", fg="#333333").grid(row=0, column=2, padx=(10, 0))
-            ent_wa = tk.Entry(f_pasien, width=18, bg="white", fg="black")
-            ent_wa.grid(row=0, column=3, padx=5, pady=5)
-
-            def on_pasien_selected(event=None):
-                p = next((x for x in pasien_cache if x["nama"] == cb_pasien.get()), None)
-                ent_wa.delete(0, tk.END)
-                if p and p["kontak"]:
-                    ent_wa.insert(0, p["kontak"])
-
-            cb_pasien.bind('<<ComboboxSelected>>', on_pasien_selected)
-
-            f_bottom = tk.Frame(content, bg="white")
+            f_bottom = tk.Frame(tab_umum, bg="white")
             f_bottom.pack(fill=tk.X, pady=5)
 
             lbl_total = tk.Label(f_bottom, text="Total: Rp 0", font=("Calibri", 14, "bold"), bg="white", fg="#1E8E3E")
@@ -351,98 +336,131 @@ def main_app():
                 p_name = cb_prod.get()
                 qty_s = ent_qty.get()
                 item = next((p for p in products_cache if p["nama"] == p_name), None)
-                
-                if not item:
-                    msgbox.showwarning("Peringatan", "Produk tidak ditemukan!")
-                    return
+                if not item: return
                 if qty_s.isdigit() and int(qty_s) > 0:
                     q = int(qty_s)
                     if q > item["stok"]:
                         msgbox.showwarning("Stok Kurang", f"Stok tersedia hanya {item['stok']}!")
                         return
-                    
                     sub = item["harga"] * q
                     cart.append({"id": item["id"], "nama": p_name, "harga": item["harga"], "qty": q, "subtotal": sub})
-                    item["stok"] -= q
                     tree.insert("", tk.END, values=(p_name, f"Rp {item['harga']:,}", q, f"Rp {sub:,}"))
-                    update_total()
-                    cb_prod.set("")
-                    cb_prod['values'] = all_product_names
-
-            def hapus_item():
-                selected = tree.selection()
-                if selected:
-                    idx = tree.index(selected[0])
-                    del cart[idx]
-                    tree.delete(selected[0])
                     update_total()
 
             def cetak_struk():
                 if not cart:
                     msgbox.showwarning("Peringatan", "Keranjang belanjaan masih kosong!")
                     return
-                
                 nama_pasien = cb_pasien.get().strip() or "Umum"
-                kontak_pasien = ent_wa.get().strip()
                 total_bayar = sum(c["subtotal"] for c in cart)
 
-                sudah_terdaftar = any(p["nama"] == nama_pasien for p in pasien_cache)
-                if nama_pasien.lower() != "umum" and not sudah_terdaftar:
-                    try:
-                        db.add_pasien(nama_pasien, kontak_pasien)
-                    except Exception as e:
-                        msgbox.showerror("Database Error", f"Gagal menyimpan data pasien baru:\n{e}")
-                        return
-
                 try:
-                    waktu_dt = db.process_sale(cart, nama_pasien)
+                    waktu_dt = db.process_sale(cart, nama_pasien, resep_id=active_resep_id[0])
                 except Exception as e:
                     msgbox.showerror("Database Error", f"Gagal menyimpan transaksi:\n{e}")
                     return
 
-                waktu = waktu_dt.strftime("%Y-%m-%d %H:%M:%S") if hasattr(waktu_dt, 'strftime') else str(waktu_dt)
+                # --- 1. SUSUN TEKS STRUK (Dukungan Bebas / Resep) ---
+                is_resep = active_resep_id[0] is not None
+                tipe_tx = "PENJUALAN RESEP" if is_resep else "PENJUALAN UMUM"
+                tgl_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
-                win_struk = tk.Toplevel(root)
-                win_struk.title("Struk Transaksi - ApoLink")
-                win_struk.geometry("350x450")
-                win_struk.configure(bg="white")
+                struk_txt = f"{'APOLINK PHARMACY':^35}\n"
+                struk_txt += f"{'Jl. Raya Farmasi No. 123':^35}\n"
+                struk_txt += "=" * 35 + "\n"
+                struk_txt += f"Tipe Transaksi : {tipe_tx}\n"
+                struk_txt += f"Pasien         : {nama_pasien}\n"
+                struk_txt += f"Tanggal        : {tgl_str}\n"
+                struk_txt += "-" * 35 + "\n"
 
-                txt = tk.Text(win_struk, font=("Courier", 10), bg="white", fg="black", bd=0, padx=10, pady=10)
-                txt.pack(fill=tk.BOTH, expand=True)
-
-                struk_text = f"{'APOLINK PHARMACY':^32}\n"
-                struk_text += f"{'Jl. Kesehatan No. 123':^32}\n"
-                struk_text += "="*32 + "\n"
-                struk_text += f"Kasir: {current_user['nama']}\n"
-                struk_text += f"Tgl: {waktu}\n"
-                struk_text += f"Pasien: {nama_pasien}\n"
-                if kontak_pasien:
-                    struk_text += f"WA: {kontak_pasien}\n"
-                struk_text += "-"*32 + "\n"
-                
                 for c in cart:
-                    struk_text += f"{c['nama'][:20]:<20}\n"
-                    struk_text += f"  {c['qty']} x {c['harga']:,} = Rp{c['subtotal']:,}\n"
-                
-                struk_text += "="*32 + "\n"
-                struk_text += f"TOTAL      : Rp {total_bayar:,}\n"
-                struk_text += "="*32 + "\n"
-                struk_text += f"{'Terima Kasih Semoga Lekas Sembuh':^32}\n"
+                    struk_txt += f"{c['nama']}\n"
+                    item_line = f"  {c['qty']} x Rp {c['harga']:,}"
+                    sub_str = f"Rp {c['subtotal']:,}"
+                    struk_txt += f"{item_line:<22}{sub_str:>13}\n"
 
-                txt.insert(tk.END, struk_text)
-                txt.config(state=tk.DISABLED)
+                struk_txt += "=" * 35 + "\n"
+                struk_txt += f"{'TOTAL BAYAR':<20} Rp {f'{total_bayar:,}':>10}\n"
+                struk_txt += "=" * 35 + "\n"
+                struk_txt += f"{'Terima Kasih Atas Kunjungan Anda':^35}\n"
+                struk_txt += f"{'Semoga Lekas Sembuh':^35}\n"
 
-                msgbox.showinfo("Sukses", "Transaksi berhasil dan stok telah diperbarui!")
-                cart.clear()
-                show_kasir()
+                # --- 2. TAMPILKAN POPUP STRUK BELANJA ---
+                top_struk = tk.Toplevel(content)
+                top_struk.title("Bukti Pembayaran / Struk Pasien")
+                top_struk.geometry("360x500")
+                top_struk.configure(bg="white")
+                top_struk.grab_set()
+
+                txt_widget = tk.Text(top_struk, font=("Courier", 10), bg="#F9F9F9", fg="black", padx=10, pady=10)
+                txt_widget.insert(tk.END, struk_txt)
+                txt_widget.config(state=tk.DISABLED)
+                txt_widget.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+                def tutup_dan_reset():
+                    top_struk.destroy()
+                    cart.clear()
+                    active_resep_id[0] = None
+                    show_kasir()
+
+                CustomButton(top_struk, text="✅ Selesai & Tutup Struk", command=tutup_dan_reset, bg="#1E8E3E").pack(pady=(0, 10))
 
             CustomButton(f_in, text="+ Tambah", command=tambah, bg="#34A853").grid(row=0, column=4, padx=5)
-            
-            btn_action_frame = tk.Frame(f_bottom, bg="white")
-            btn_action_frame.pack(side=tk.LEFT)
-            
-            CustomButton(btn_action_frame, text="🗑 Hapus Item", command=hapus_item, bg="#D84315").pack(side=tk.LEFT, padx=2)
-            CustomButton(btn_action_frame, text="🖨 Cetak Struk / Bayar", command=cetak_struk, bg="#1E8E3E").pack(side=tk.LEFT, padx=5)
+            CustomButton(f_bottom, text="🖨 Cetak Struk / Bayar", command=cetak_struk, bg="#1E8E3E").pack(side=tk.LEFT, padx=5)
+
+            # --- TAB PENJUALAN RESEP ---
+            f_rsp_box = tk.Frame(tab_resep, bg="white")
+            f_rsp_box.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+            tk.Label(f_rsp_box, text="Daftar Antrean Resep Siap Bayar (READY_TO_BILL):", font=("Calibri", 11, "bold"), bg="white", fg="#1565C0").pack(anchor="w", pady=(0, 5))
+
+            tree_antrean_rsp = ttk.Treeview(f_rsp_box, columns=("No. Resep", "Pasien", "Dokter", "Durasi Penyiapan", "Hasil Telaah"), show="headings", height=8)
+            for c in ("No. Resep", "Pasien", "Dokter", "Durasi Penyiapan", "Hasil Telaah"):
+                tree_antrean_rsp.heading(c, text=c)
+                tree_antrean_rsp.column(c, anchor="center")
+            tree_antrean_rsp.pack(fill=tk.BOTH, expand=True, pady=5)
+
+            def load_selected_resep():
+                selected = tree_antrean_rsp.selection()
+                if not selected:
+                    msgbox.showwarning("Peringatan", "Pilih resep terlebih dahulu dari tabel!")
+                    return
+                
+                rsp_id = int(selected[0])
+                rsp_data = db.get_resep_by_id(rsp_id)
+                if not rsp_data: return
+
+                active_resep_id[0] = rsp_id
+                cart.clear()
+                for r in tree.get_children(): tree.delete(r)
+
+                cb_pasien.set(rsp_data["nama_pasien"])
+                for item in rsp_data["items"]:
+                    cart.append({
+                        "id": item["produk_id"],
+                        "nama": item["produk_nama"],
+                        "harga": item["harga_satuan"],
+                        "qty": item["jumlah"],
+                        "subtotal": item["subtotal"]
+                    })
+                    tree.insert("", tk.END, values=(item["produk_nama"], f"Rp {item['harga_satuan']:,}", item["jumlah"], f"Rp {item['subtotal']:,}"))
+
+                update_total()
+                notebook.select(tab_umum)
+                msgbox.showinfo("Resep Dimuat", f"Data Resep {rsp_data['nomor_resep']} berhasil dimuat otomatis ke POS Kasir!")
+
+            CustomButton(f_rsp_box, text="📥 Pilih / Load Resep ke Kasir", command=load_selected_resep, bg="#1565C0").pack(anchor="w", pady=5)
+
+            def refresh_resep_kasir():
+                for r in tree_antrean_rsp.get_children(): tree_antrean_rsp.delete(r)
+                ready_list = db.get_resep_ready_to_bill()
+                for r in ready_list:
+                    dur_m = r["duration_seconds"] // 60
+                    dur_s = r["duration_seconds"] % 60
+                    dur_str = f"{dur_m:02d}m {dur_s:02d}s"
+                    tree_antrean_rsp.insert("", tk.END, iid=str(r["id"]), values=(r["nomor_resep"], r["nama_pasien"], r["dokter_penulis"], dur_str, r["hasil_telaah"]))
+
+            refresh_resep_kasir()
 
         # 3. KELOLA PRODUK
         def show_produk():
